@@ -215,7 +215,7 @@ erDiagram
     AUDIT_LOGS {
         uuid id PK
         uuid companyId FK "nullable for platform-level super-admin actions"
-        uuid actorUserId FK
+        uuid actorUserId FK "nullable - see note below"
         string action "e.g. LEAVE_APPROVED, BALANCE_ADJUSTED"
         string entityType
         uuid entityId
@@ -356,6 +356,14 @@ erDiagram
   log in with, so it must have an email; this is enforced as a real database
   constraint, not just application validation, since it's cheap to express
   and catches the case structurally.
+- **`audit_logs.actorUserId` is nullable** (added during Step 1.2, auth): a
+  failed login attempt against a company code or identifier that doesn't
+  match any account has no user row to attach as the actor, but is exactly
+  the kind of event worth auditing (repeated failed logins against an
+  unknown identifier is a brute-force signal). Such entries are written with
+  `actorUserId: null` and the attempted identifier/IP captured in `metadata`.
+  A successful login, or a failure against a *resolved* user (wrong
+  password, deactivated account), still sets `actorUserId` to that user.
 - Every table above except `companies` carries `companyId` directly — even
   `leave_balances` and `leave_request_documents`, which are technically
   reachable via a join through `employees`/`leave_requests` — so the

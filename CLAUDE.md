@@ -105,12 +105,13 @@ pnpm typecheck
 pnpm lint
 pnpm db:migrate
 pnpm db:seed
+pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the test DB (also runs automatically before `pnpm test`)
 ```
 
 ## Status
 - [x] Step 0 — Design docs (architecture, ER diagram, permission matrix)
 - [x] 1.1 Monorepo + Docker + Prisma + health check + seed
-- [ ] 1.2 Auth, roles, tenant isolation + tests
+- [x] 1.2 Auth, roles, tenant isolation + tests
 - [ ] 1.3 Company setup, departments, designations, employees
 - [ ] 1.4 Leave module + sick leave documents
 - [ ] 1.5 Web portal (HR + Manager)

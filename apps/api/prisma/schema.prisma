@@ -296,8 +296,8 @@ model AuditLog {
   id          String   @id @default(uuid())
   companyId   String?
   company     Company? @relation(fields: [companyId], references: [id])
-  actorUserId String
-  actor       User     @relation("AuditLogActor", fields: [actorUserId], references: [id])
+  actorUserId String?
+  actor       User?    @relation("AuditLogActor", fields: [actorUserId], references: [id])
   action      String
   entityType  String
   entityId    String
