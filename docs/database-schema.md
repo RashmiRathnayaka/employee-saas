@@ -130,6 +130,7 @@ erDiagram
         decimal defaultAnnualDays
         boolean requiresProof "e.g. true for sick leave"
         boolean carryForwardAllowed
+        boolean allowPastDates "default false; true for sick leave - see Step 1.4 notes"
         timestamptz createdAt
     }
 
@@ -189,7 +190,7 @@ erDiagram
         uuid id PK
         uuid companyId FK
         uuid leaveRequestId FK
-        string objectKey "MinIO key, not a path the client controls"
+        string objectKey "StorageService key, not a path the client controls"
         string filename
         string contentType
         int sizeBytes
@@ -264,7 +265,11 @@ erDiagram
   `available >= totalDays` and increments `pendingDays` inside the same
   transaction as creating the `leave_requests` row + row lock; a decision
   later moves days between `pendingDays`/`usedDays` (see `leave_requests`
-  below) — see `docs/architecture.md` §3 for the full flow.
+  below) — see `docs/architecture.md` §3 for the full flow. `CHECK
+  (usedDays >= 0)` and `CHECK (pendingDays >= 0)` (added Step 1.4) are a
+  last line of defense against a bug in that math driving a balance
+  negative - the application logic should never let it happen, but the
+  constraint makes "never" structural instead of just intended.
 - `leave_requests`: index on `(companyId, employeeId)`; index on
   `(companyId, status)` for the manager/HR "pending approvals" queries; index
   on `proofDueAt` (nullable) for the sick-leave-proof reminder/escalation job;

@@ -11,7 +11,7 @@ import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireCompanyContext } from "../../middleware/requireCompanyContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { validateBody } from "../../middleware/validate.js";
-import { createUser, listUsers, updateUserRole, updateUserStatus } from "./users.service.js";
+import { createUser, listUsers, resetUserPassword, updateUserRole, updateUserStatus } from "./users.service.js";
 
 export const usersRouter = Router();
 
@@ -54,6 +54,20 @@ usersRouter.patch(
       role: req.body.role,
     });
     res.status(200).json({ user: toUserDto(user) });
+  }),
+);
+
+usersRouter.post(
+  "/users/:id/reset-password",
+  requireRole("COMPANY_ADMIN", "HR"),
+  asyncHandler(async (req, res) => {
+    const { temporaryPassword } = await resetUserPassword({
+      companyId: req.auth!.companyId!,
+      actorUserId: req.auth!.userId,
+      actorRole: req.auth!.role as "COMPANY_ADMIN" | "HR",
+      targetUserId: req.params.id!,
+    });
+    res.status(200).json({ temporaryPassword });
   }),
 );
 

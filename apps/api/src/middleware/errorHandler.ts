@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler } from "express";
+import multer from "multer";
 import { ZodError } from "zod";
 import { ApiError } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
@@ -8,6 +9,12 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     res.status(err.statusCode).json({
       error: { code: err.code, message: err.message, details: err.details },
     });
+    return;
+  }
+
+  if (err instanceof multer.MulterError) {
+    const code = err.code === "LIMIT_FILE_SIZE" ? "FILE_TOO_LARGE" : "UPLOAD_ERROR";
+    res.status(400).json({ error: { code, message: err.message } });
     return;
   }
 

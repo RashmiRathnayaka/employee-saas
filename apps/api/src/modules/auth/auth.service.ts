@@ -11,7 +11,7 @@ const genericLoginError = () =>
   new ApiError(401, "INVALID_CREDENTIALS", "Invalid company code, identifier, or password.");
 const genericSessionError = () => new ApiError(401, "UNAUTHENTICATED", "Invalid or expired session.");
 
-export function toAuthUser(user: User): AuthUser {
+export function toAuthUser(user: Omit<User, "passwordHash">): AuthUser {
   return {
     id: user.id,
     companyId: user.companyId,
@@ -42,13 +42,16 @@ async function resolveLoginTarget(companyCode: string, identifier: string): Prom
 
   const employee = await platformPrisma.employee.findFirst({
     where: { companyId: company.id, employeeCode: identifier },
-    include: { user: true },
+    include: { user: { omit: { passwordHash: false } } },
   });
   if (employee?.user) {
     return { company, user: employee.user };
   }
 
-  const user = await platformPrisma.user.findFirst({ where: { companyId: company.id, email: identifier } });
+  const user = await platformPrisma.user.findFirst({
+    where: { companyId: company.id, email: identifier },
+    omit: { passwordHash: false },
+  });
   return { company, user };
 }
 
@@ -124,6 +127,7 @@ export async function platformLogin(params: { email: string; password: string; u
 
   const user = await platformPrisma.user.findFirst({
     where: { companyId: null, email, role: "SUPER_ADMIN" },
+    omit: { passwordHash: false },
   });
 
   if (!user) {
@@ -237,7 +241,10 @@ export async function logout(rawRefreshToken: string | null) {
 }
 
 export async function changePassword(params: { userId: string; currentPassword: string; newPassword: string }) {
-  const user = await platformPrisma.user.findUnique({ where: { id: params.userId } });
+  const user = await platformPrisma.user.findUnique({
+    where: { id: params.userId },
+    omit: { passwordHash: false },
+  });
   if (!user) {
     throw new ApiError(404, "NOT_FOUND", "User not found.");
   }

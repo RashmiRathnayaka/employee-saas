@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["omitApi"]
 }
 
 datasource db {
@@ -166,6 +167,10 @@ model LeaveType {
   defaultAnnualDays   Decimal  @db.Decimal(5, 2)
   requiresProof       Boolean  @default(false)
   carryForwardAllowed Boolean  @default(false)
+  // Submitting a request with startDate in the past is normally rejected;
+  // this allows it (e.g. sick leave filed the morning after) - bounded to
+  // 30 days back regardless, enforced in the service layer.
+  allowPastDates      Boolean  @default(false)
   createdAt           DateTime @default(now())
 
   leaveBalances LeaveBalance[]

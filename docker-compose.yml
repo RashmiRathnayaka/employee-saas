@@ -17,12 +17,10 @@ services:
       timeout: 5s
       retries: 10
 
-  # MinIO is deferred: as of this writing, minio/minio requires an
-  # authenticated pull on both Docker Hub and quay.io (MinIO's 2024
-  # licensing change), so it isn't included here yet. It goes back in
-  # before Step 1.4 (file uploads) - either with a Docker Hub login that
-  # has access, or swapped for an S3-compatible alternative (e.g.
-  # LocalStack) if that restriction is still in place.
+  # File storage doesn't need a container in dev - see docs/architecture.md
+  # §6. The "local" StorageService driver (default) just uses a folder on
+  # the API's own disk; MinIO was dropped as of Step 1.4 (licensing-change
+  # pull restrictions, see the §6 history note).
 
   mailpit:
     image: axllent/mailpit:latest

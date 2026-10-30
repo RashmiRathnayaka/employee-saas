@@ -20,3 +20,5 @@ Thumbs.db
 coverage/
 
 apps/api/generated/
+apps/api/storage-data/
+apps/api/storage-data-test/

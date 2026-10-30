@@ -66,7 +66,8 @@ discover it immediately after logging in).
 |---|---|---|---|
 | GET | `/users` | COMPANY_ADMIN, HR | List user accounts in own company |
 | POST | `/users` | COMPANY_ADMIN | Create a user account and assign a role |
-| PATCH | `/users/:id` | COMPANY_ADMIN | Change a user's role / reset password |
+| PATCH | `/users/:id` | COMPANY_ADMIN | Change a user's role |
+| POST | `/users/:id/reset-password` | COMPANY_ADMIN, HR (not on a COMPANY_ADMIN target) | Set a new temporary password + `mustChangePassword`, revoke the user's refresh tokens, return the password once |
 | PATCH | `/users/:id/status` | COMPANY_ADMIN | Deactivate / reactivate a user |
 
 ## Departments
@@ -134,9 +135,9 @@ discover it immediately after logging in).
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| POST | `/leave-requests/:id/documents` | request owner | Upload a file directly (`multipart/form-data`, max 5 MB, jpg/png/pdf — validated by declared type and by magic bytes); API streams it to MinIO and creates the metadata row |
+| POST | `/leave-requests/:id/documents` | request owner | Upload a file directly (`multipart/form-data`, max 5 MB, jpg/png/pdf — validated by declared type and by magic bytes); API streams it to storage (`StorageService`) and creates the metadata row |
 | GET | `/leave-requests/:id/documents` | owner, COMPANY_ADMIN, HR | List documents on a request |
-| GET | `/leave-requests/:id/documents/:docId/download` | owner, COMPANY_ADMIN, HR | Get a short-lived signed download URL (built from `S3_PUBLIC_URL`) |
+| GET | `/leave-requests/:id/documents/:docId/download` | owner, COMPANY_ADMIN, HR | Get a short-lived signed download URL (via `StorageService` - an HMAC-signed `/files/download` link for the `local` driver, a presigned S3 URL for the `s3` driver) |
 | PATCH | `/leave-requests/:id/documents/:docId/review` | HR | Set status (Accepted / Rejected / Info Required) + note; updates the parent request's `proofStatus` |
 
 ## Notifications

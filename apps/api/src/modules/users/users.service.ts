@@ -105,6 +105,46 @@ export async function updateUserRole(params: {
   });
 }
 
+export async function resetUserPassword(params: {
+  companyId: string;
+  actorUserId: string;
+  actorRole: "COMPANY_ADMIN" | "HR";
+  targetUserId: string;
+}) {
+  const tenant = getTenantPrisma(params.companyId);
+  const target = await tenant.user.findUnique({ where: { id: params.targetUserId } });
+  if (!target) {
+    throw new ApiError(404, "NOT_FOUND", "User not found.");
+  }
+
+  if (params.actorRole === "HR" && target.role === "COMPANY_ADMIN") {
+    throw new ApiError(403, "FORBIDDEN", "HR cannot reset a company admin's password.");
+  }
+
+  const temporaryPassword = generateTempPassword();
+  const passwordHash = await argon2.hash(temporaryPassword);
+
+  await tenant.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: params.targetUserId },
+      data: { passwordHash, mustChangePassword: true },
+    });
+    await tx.refreshToken.updateMany({
+      where: { userId: params.targetUserId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await writeAudit(tx, {
+      companyId: params.companyId,
+      actorUserId: params.actorUserId,
+      action: "USER_PASSWORD_RESET",
+      entityType: "User",
+      entityId: params.targetUserId,
+    });
+  });
+
+  return { temporaryPassword };
+}
+
 export async function updateUserStatus(params: {
   companyId: string;
   actorUserId: string;

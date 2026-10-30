@@ -18,7 +18,7 @@ apps/api        Node.js LTS, Express, TypeScript (strict), Prisma, PostgreSQL, Z
 apps/web        React, TypeScript, Vite, React Router, TanStack Query, Tailwind + shadcn/ui, react-hook-form + Zod
 apps/mobile     Expo (managed) + Expo Router, TanStack Query, expo-secure-store, react-hook-form + Zod
 packages/shared Zod schemas, shared types, enums, permission constants (used by api, web and mobile)
-docker-compose  postgres, minio (S3-compatible private file storage), mailpit (dev email)
+docker-compose  postgres, mailpit (dev email) — file storage is a local-disk/S3 StorageService, no container needed (see docs/architecture.md §6)
 ```
 Do not add new frameworks or major libraries without explaining why and asking first.
 
@@ -48,7 +48,7 @@ Do not add new frameworks or major libraries without explaining why and asking f
 - Sensitive actions (approvals, role changes, balance adjustments, attendance corrections, document access) are written to `audit_logs`.
 
 ### Files
-- Files are stored in private object storage (MinIO in dev). The DB stores metadata + object key only.
+- Files are stored in private object storage via a `StorageService` abstraction (local disk in dev/test, S3 in prod). The DB stores metadata + object key only.
 - Downloads use short-lived signed URLs, issued only after a permission check.
 - Validate file type and size (medical proof: jpg/png/pdf, max 5 MB).
 
@@ -97,7 +97,7 @@ Do not add new frameworks or major libraries without explaining why and asking f
 ## Commands
 _(Update this section as scripts are created.)_
 ```
-docker compose up -d     # start postgres, mailpit (minio deferred - see README)
+docker compose up -d     # start postgres, mailpit (file storage needs no container - see README)
 pnpm install
 pnpm dev                 # run api + web
 pnpm test
@@ -113,7 +113,7 @@ pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the tes
 - [x] 1.1 Monorepo + Docker + Prisma + health check + seed
 - [x] 1.2 Auth, roles, tenant isolation + tests
 - [x] 1.3 Company setup, departments, designations, employees
-- [ ] 1.4 Leave module + sick leave documents
+- [x] 1.4 Leave module + sick leave documents
 - [ ] 1.5 Web portal (HR + Manager)
 - [ ] 1.6 Mobile MVP
 - [ ] 1.7 In-app notifications

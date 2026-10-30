@@ -17,7 +17,7 @@ packages/shared Zod schemas, shared types, enums (used by api, web, mobile)
 
 - Node.js 20+ (tested with v22)
 - pnpm (tested with 12.16.1) — `npm install -g pnpm` if you don't have it
-- Docker Desktop (for Postgres and Mailpit; see the MinIO note below)
+- Docker Desktop (for Postgres and Mailpit)
 
 ## First-time setup
 
@@ -70,15 +70,15 @@ if the API can reach Postgres.
 
 Mailpit UI: http://localhost:8025.
 
-## MinIO (deferred)
+## File storage
 
-`docker-compose.yml` does not run MinIO yet: as of this writing, pulling
-`minio/minio` requires an authenticated Docker Hub or quay.io login (MinIO's
-2024 licensing change) on every tag we tried, both plain `latest` and pinned
-`RELEASE.*` tags. It needs to go back in before Step 1.4 (file uploads) —
-either with a Docker Hub/quay.io login that has access, or swapped for an
-S3-compatible alternative (e.g. LocalStack, which pulls anonymously without
-issue) if that restriction is still in place then.
+`STORAGE_DRIVER` in `apps/api/.env` picks the backend - `local` (default,
+dev/test) writes to `STORAGE_LOCAL_PATH` (`./storage-data`, gitignored) on
+the API's own disk and serves downloads through this API itself; `s3` uses
+a real S3-compatible bucket via the `S3_*` settings. No separate container
+needed for either - see `docs/architecture.md` §6 for the full design
+(this replaced an earlier MinIO-container plan; MinIO's 2024 licensing
+change made it impractical to pull in a disposable dev/CI environment).
 
 ## Seeded accounts
 
@@ -166,9 +166,10 @@ A few things worth knowing:
   employee in the same company, is the employee themselves, or would create
   a reporting cycle (walks the chain up from the proposed manager looking
   for the employee being updated).
-- **Deactivating an employee** also deactivates their login and revokes all
-  their refresh tokens. Their pending leave requests are untouched (that's
-  Step 1.4).
+- **Deactivating an employee** also deactivates their login, revokes all
+  their refresh tokens, and (as of Step 1.4) auto-cancels any of their
+  still-pending leave requests, releasing the reserved days back to their
+  balance.
 - **A company always keeps at least one active `COMPANY_ADMIN`**: an admin
   can't deactivate themselves or remove their own admin role, and the last
   active admin can't be removed by anyone - whether through the users
@@ -179,22 +180,64 @@ A few things worth knowing:
   ("Engineering" and "engineering" collide) via a hand-written functional
   index - see `docs/database-schema.md`.
 
-**Known limitation**: `PATCH /users/:id` changes role only; there's no
-password-reset-by-admin endpoint yet (not in this step's test list - a
-clean follow-up for a later step).
+`PATCH /users/:id` changes role; `POST /users/:id/reset-password`
+(COMPANY_ADMIN, or HR for non-admin targets) handles password resets.
+
+## Leave module (Step 1.4)
+
+Leave types, balances, requests, approvals, and sick leave documents - see
+`docs/api-phase1.md` for the endpoint list and `docs/architecture.md` §3
+for the full request-flow design this follows exactly.
+
+- **Day calculation** (`apps/api/src/lib/leaveDays.ts`) weighs each calendar
+  day by `company_settings.workingDays` (FULL/HALF/OFF per weekday - a
+  half-Saturday by default) and zeroes out company holidays, then halves
+  the start/end day if its half-day flag is set. A result of 0 (e.g. a
+  request entirely on a weekend) is rejected.
+- **Validation on submit**: the date range must stay within one calendar
+  year; it can't overlap an existing pending/approved request for the same
+  employee; past dates are rejected unless the leave type allows them
+  (sick leave does, up to 30 days back).
+- **Balance math** - `pendingDays` is reserved at submission (inside a
+  transaction that locks the balance row, so two concurrent submissions
+  can't both pass the same stale balance check), then:
+  - **approve** (at the final step) moves those days from `pendingDays` to
+    `usedDays`;
+  - **reject** or **cancel** releases `pendingDays` - nothing was ever used;
+  - **revoke** (an already-approved *future* request only) removes the
+    days from `usedDays` - they'd already left `pendingDays` at approval
+    time, so there's nothing left there to touch.
+  - `leave_balances.usedDays`/`pendingDays` both have a DB `CHECK (... >= 0)`
+    as a last line of defense behind this math.
+- **Approval routing**: `MANAGER_ONLY` or `MANAGER_THEN_HR` (a company
+  setting). No manager on file → straight to the HR step. HR can always
+  step in at the manager step as a fallback, and that decision is final (it
+  doesn't go on to a redundant HR step). Nobody decides their own request,
+  and a step can't be decided twice.
+- **Sick leave documents**: multipart upload (max 5 MB, jpg/png/pdf),
+  content-type checked both by what the client declares *and* by sniffing
+  the actual bytes (the `file-type` package) - a renamed `.exe` is
+  rejected either way. Uploading moves `proofStatus` from `MISSING`/
+  `INFO_REQUIRED` to `SUBMITTED`; HR's review (`ACCEPTED`/`REJECTED`/
+  `INFO_REQUIRED`) updates both the document and the parent request.
+  Managers can never view or download a document, even their own direct
+  report's - only the leave *decision* is their concern.
 
 ## Mobile (Expo) on a LAN device
 
-`apps/api/.env`'s `S3_PUBLIC_URL` defaults to `http://localhost:9000`, which
-only works from the same machine. Once MinIO and `apps/mobile` are both built
-out, set it to your machine's LAN IP (e.g. `http://192.168.1.50:9000`) so a
-phone on the same network can resolve signed file-download URLs.
+A phone running the Expo app needs to reach the API at your machine's LAN
+IP (not `localhost`) for every endpoint anyway, including file downloads -
+`local`-driver downloads are just another API route
+(`/api/v1/files/download`), so there's nothing extra to configure for them
+specifically. Only `STORAGE_DRIVER=s3` needs its own LAN-reachable address:
+`apps/api/.env`'s `S3_PUBLIC_URL` (defaults to `http://localhost:9000`,
+which only works from the same machine) should be set to your machine's LAN
+IP in that case.
 
 ## Known limitations
 
 - `apps/web` is a placeholder Vite/React page — HR/Manager dashboards land in Step 1.5.
 - `apps/mobile` is a placeholder workspace package (no Expo app yet) — lands in Step 1.6.
-- No leave module yet (requests, approvals, balances endpoints, sick leave documents) — that's Step 1.4.
-- MinIO isn't running yet (see above) — file upload/download code also lands in Step 1.4.
-- No employee-management UI yet — the API exists (Step 1.3) but there's no web/mobile screen to use it from.
-- No password-reset-by-admin endpoint — see the Auth section above.
+- No employee/leave-management UI yet — the API exists (Steps 1.3-1.4) but there's no web/mobile screen to use it from.
+- No in-app notification endpoints yet — rows are written (`createNotification`) but nothing reads them until Step 1.7.
+- Automated proof-deadline reminders aren't implemented — `leave_requests.proofDueAt` is stored but nothing currently acts on it.

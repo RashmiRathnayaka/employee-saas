@@ -327,4 +327,88 @@ describe("employees module", () => {
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe("CANNOT_MODIFY_SELF");
   });
+
+  it("deactivating an employee cancels their pending leave requests and releases pendingDays", async () => {
+    const app = createApp();
+    const { token, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+
+    const empRes = await request(app)
+      .post("/api/v1/employees")
+      .set("Authorization", token)
+      .send({
+        firstName: "Soon",
+        lastName: "Deactivated",
+        joiningDate: "2026-01-01",
+        createLogin: true,
+        loginEmail: "soon-deactivated@example.test",
+        loginRole: "EMPLOYEE",
+      });
+    const employeeId = empRes.body.employee.id;
+    const tempPassword = empRes.body.login.temporaryPassword;
+
+    const loginRes = await loginAs(app, {
+      companyCode: company.code,
+      identifier: "soon-deactivated@example.test",
+      password: tempPassword,
+      clientType: "mobile",
+    });
+    await request(app)
+      .post("/api/v1/auth/change-password")
+      .set("Authorization", `Bearer ${loginRes.body.accessToken}`)
+      .send({ currentPassword: tempPassword, newPassword: "DeactivatedPassw0rd!1" });
+    const employeeToken = await bearerFor(app, {
+      companyCode: company.code,
+      identifier: "soon-deactivated@example.test",
+      password: "DeactivatedPassw0rd!1",
+    });
+
+    const typesRes = await request(app).get("/api/v1/leave-types").set("Authorization", token);
+    const annual = typesRes.body.data.find((t: { code: string }) => t.code === "ANNUAL");
+
+    // a safely-future 8-day span guarantees at least some working days,
+    // whatever day of the week "today" happens to be when this test runs
+    let start = new Date();
+    start.setUTCDate(start.getUTCDate() + 10);
+    let end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 7);
+    if (start.getUTCFullYear() !== end.getUTCFullYear()) {
+      // avoid the rare case of this span crossing into next year (a
+      // single leave request must stay within one calendar year) - jump
+      // well into next year instead, still safely future either way
+      start = new Date(Date.UTC(end.getUTCFullYear(), 1, 10));
+      end = new Date(Date.UTC(end.getUTCFullYear(), 1, 17));
+    }
+    const toIso = (d: Date) => d.toISOString().slice(0, 10);
+
+    const leaveRes = await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", employeeToken)
+      .send({ leaveTypeId: annual.id, startDate: toIso(start), endDate: toIso(end) });
+    expect(leaveRes.status).toBe(201);
+    const totalDays = leaveRes.body.leaveRequest.totalDays;
+    expect(totalDays).toBeGreaterThan(0);
+
+    const balanceBefore = await request(app)
+      .get(`/api/v1/employees/${employeeId}/leave-balances`)
+      .set("Authorization", token);
+    const annualBalanceBefore = balanceBefore.body.data.find((b: { leaveTypeId: string }) => b.leaveTypeId === annual.id);
+    expect(annualBalanceBefore.pendingDays).toBe(totalDays);
+
+    const deactivateRes = await request(app)
+      .patch(`/api/v1/employees/${employeeId}/status`)
+      .set("Authorization", token)
+      .send({ status: "INACTIVE" });
+    expect(deactivateRes.status).toBe(200);
+
+    const leaveAfter = await request(app)
+      .get(`/api/v1/leave-requests/${leaveRes.body.leaveRequest.id}`)
+      .set("Authorization", token);
+    expect(leaveAfter.body.leaveRequest.status).toBe("CANCELLED");
+
+    const balanceAfter = await request(app)
+      .get(`/api/v1/employees/${employeeId}/leave-balances`)
+      .set("Authorization", token);
+    const annualBalanceAfter = balanceAfter.body.data.find((b: { leaveTypeId: string }) => b.leaveTypeId === annual.id);
+    expect(annualBalanceAfter.pendingDays).toBe(0);
+  });
 });

@@ -104,6 +104,28 @@ export async function bearerFor(
   return `Bearer ${res.body.accessToken as string}`;
 }
 
+/** Logs in with a temporary (mustChangePassword) password, changes it, and
+ * returns a bearer token for the new password - the dance every freshly
+ * created login (new employee, new standalone user) has to go through
+ * before it can call anything else. */
+export async function activateTempPassword(
+  app: Express,
+  params: { companyCode: string; identifier: string; tempPassword: string; newPassword?: string },
+) {
+  const newPassword = params.newPassword ?? "ActivatedPassw0rd!1";
+  const loginRes = await loginAs(app, {
+    companyCode: params.companyCode,
+    identifier: params.identifier,
+    password: params.tempPassword,
+    clientType: "mobile",
+  });
+  await request(app)
+    .post("/api/v1/auth/change-password")
+    .set("Authorization", `Bearer ${loginRes.body.accessToken}`)
+    .send({ currentPassword: params.tempPassword, newPassword });
+  return bearerFor(app, { companyCode: params.companyCode, identifier: params.identifier, password: newPassword });
+}
+
 /** Creates a company + an ACTIVE, password-already-set user of the given
  * role, and returns a ready-to-use bearer token for them. The common setup
  * for most module tests, which mostly care about "a company with someone
@@ -122,6 +144,40 @@ export async function setUpCompanyWithUser(
   });
   const token = await bearerFor(app, { companyCode: company.code, identifier: email, password });
   return { company, user, token };
+}
+
+/** Creates an employee (optionally reporting to managerId) with a login,
+ * activates its temp password, and returns both. Used by leave-request
+ * tests, which need several distinct employee/manager logins per test. */
+export async function createEmployeeWithLogin(
+  app: Express,
+  adminToken: string,
+  companyCode: string,
+  params: { firstName: string; email: string; managerId?: string; role?: "EMPLOYEE" | "MANAGER" | "HR" },
+) {
+  const res = await request(app)
+    .post("/api/v1/employees")
+    .set("Authorization", adminToken)
+    .send({
+      firstName: params.firstName,
+      lastName: "Test",
+      joiningDate: "2020-01-01",
+      managerId: params.managerId,
+      createLogin: true,
+      loginEmail: params.email,
+      loginRole: params.role ?? "EMPLOYEE",
+    });
+  const token = await activateTempPassword(app, {
+    companyCode,
+    identifier: params.email,
+    tempPassword: res.body.login.temporaryPassword,
+  });
+  return { employee: res.body.employee, token };
+}
+
+export async function getLeaveTypeIdByCode(app: Express, token: string, code: string): Promise<string> {
+  const res = await request(app).get("/api/v1/leave-types").set("Authorization", token);
+  return res.body.data.find((t: { code: string }) => t.code === code).id;
 }
 
 /** Extracts a cookie's value from a supertest response's Set-Cookie headers. */

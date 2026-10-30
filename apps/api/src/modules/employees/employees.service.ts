@@ -5,6 +5,7 @@ import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { generateTempPassword } from "../../lib/tempPassword.js";
+import { lockOrCreateBalance } from "../leaveRequests/leaveRequests.service.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
 
@@ -287,6 +288,45 @@ export async function updateEmployeeStatus(params: {
         where: { userId: linkedUser.id, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+    }
+
+    if (params.status === "INACTIVE") {
+      // Auto-cancel anything still pending and release its reserved days -
+      // see docs/architecture.md §3 (same pending/used math as a normal
+      // cancel) and Step 1.4's integration rule on deactivation.
+      const pendingRequests = await tx.leaveRequest.findMany({
+        where: { employeeId: params.employeeId, status: { in: ["PENDING_MANAGER", "PENDING_HR"] } },
+      });
+      for (const pending of pendingRequests) {
+        const year = pending.startDate.getUTCFullYear();
+        await lockOrCreateBalance(tx, {
+          companyId: params.companyId,
+          employeeId: params.employeeId,
+          leaveTypeId: pending.leaveTypeId,
+          year,
+          defaultAllocatedDays: 0,
+        });
+        await tx.leaveBalance.update({
+          where: {
+            companyId_employeeId_leaveTypeId_year: {
+              companyId: params.companyId,
+              employeeId: params.employeeId,
+              leaveTypeId: pending.leaveTypeId,
+              year,
+            },
+          },
+          data: { pendingDays: { decrement: pending.totalDays } },
+        });
+        await tx.leaveRequest.update({ where: { id: pending.id }, data: { status: "CANCELLED" } });
+        await writeAudit(tx, {
+          companyId: params.companyId,
+          actorUserId: params.actorUserId,
+          action: "LEAVE_REQUEST_CANCELLED",
+          entityType: "LeaveRequest",
+          entityId: pending.id,
+          metadata: { reason: "employee_deactivated" },
+        });
+      }
     }
 
     await writeAudit(tx, {

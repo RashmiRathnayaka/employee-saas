@@ -1,10 +1,7 @@
 import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "P2002";
-}
+import { isUniqueViolation } from "../../lib/prismaErrors.js";
 
 export async function listDesignations(companyId: string) {
   const tenant = getTenantPrisma(companyId);

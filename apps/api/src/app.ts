@@ -12,6 +12,11 @@ import { usersRouter } from "./modules/users/users.routes.js";
 import { departmentsRouter } from "./modules/departments/departments.routes.js";
 import { designationsRouter } from "./modules/designations/designations.routes.js";
 import { employeesRouter } from "./modules/employees/employees.routes.js";
+import { filesRouter } from "./modules/files/files.routes.js";
+import { leaveTypesRouter } from "./modules/leaveTypes/leaveTypes.routes.js";
+import { leaveBalancesRouter } from "./modules/leaveBalances/leaveBalances.routes.js";
+import { leaveRequestsRouter } from "./modules/leaveRequests/leaveRequests.routes.js";
+import { leaveDocumentsRouter } from "./modules/leaveDocuments/leaveDocuments.routes.js";
 
 export function createApp() {
   const app = express();
@@ -32,6 +37,11 @@ export function createApp() {
   app.use("/api/v1", departmentsRouter);
   app.use("/api/v1", designationsRouter);
   app.use("/api/v1", employeesRouter);
+  app.use("/api/v1", filesRouter);
+  app.use("/api/v1", leaveTypesRouter);
+  app.use("/api/v1", leaveBalancesRouter);
+  app.use("/api/v1", leaveRequestsRouter);
+  app.use("/api/v1", leaveDocumentsRouter);
 
   app.use(errorHandler);
 

@@ -23,9 +23,9 @@ API enforces it on every query.
                    │ Prisma Client (tenant-scoped extension)
                    ▼
            ┌─────────────┐      ┌─────────────┐
-           │ PostgreSQL  │      │   MinIO     │  (private object storage —
-           └─────────────┘      │ (S3 compat) │   medical docs, payslips, etc.)
-                                 └─────────────┘
+           │ PostgreSQL  │      │   Storage   │  (StorageService - local
+           └─────────────┘      │ (local/S3)  │   disk in dev, S3 in prod;
+                                 └─────────────┘   medical docs, payslips, etc.)
 ```
 
 `packages/shared` holds Zod schemas, TypeScript types, enums, and permission
@@ -35,7 +35,7 @@ defined exactly once.
 ## 2. Monorepo layout
 
 ```
-apps/api        Express API — the only thing that talks to Postgres and MinIO
+apps/api        Express API — the only thing that talks to Postgres and storage
 apps/web        React web portal (HR / Manager / Company Admin / Super Admin)
 apps/mobile     Expo mobile app (Employee)
 packages/shared Zod schemas, types, enums, permission constants
@@ -205,53 +205,88 @@ structural, not just "remember to add a WHERE clause":
 
 ## 6. Files (sick leave documents, payslips, etc.)
 
-- Files live in MinIO (S3-compatible), in a bucket layout keyed by company and
-  module, e.g. `company/<companyId>/leave-documents/<leaveRequestId>/<fileId>`.
-- The DB stores only metadata: object key, original filename, content type,
-  size, uploader, status. Never the file bytes.
-- **Upload goes through the API, not a client-to-MinIO pre-signed PUT.** The
-  client sends a `multipart/form-data` request straight to
-  `POST /leave-requests/:id/documents`. The API, in order:
-  1. checks the caller is permitted to upload to *this* leave request
-     (owner, within the tenant),
-  2. enforces the size limit (max 5 MB) at the multipart-parser level so an
-     oversized body is rejected before it's fully buffered,
-  3. validates the declared content type against the allow-list
-     (`jpg`/`png`/`pdf`), **then re-checks the actual file content by magic
-     bytes** (e.g. via `file-type`) — a renamed `.exe` with a `.pdf` extension
-     and a claimed `application/pdf` content type is rejected, since the
-     declared type is not trusted on its own,
-  4. streams the validated file to MinIO under a server-generated object key,
-  5. writes the `leave_request_documents` metadata row.
+File storage is abstracted behind one interface, `StorageService`
+(`apps/api/src/lib/storage/StorageService.ts`):
 
-  Routing uploads through the API (rather than a direct-to-MinIO pre-signed
-  PUT) keeps validation server-side and in one place, and avoids exposing
-  MinIO's endpoint to the client — simpler to get right for a 5 MB document
-  upload than the pre-signed-PUT pattern is worth in Phase 1.
-- **Download** still uses short-lived signed URLs, not a proxied byte stream:
-  the client asks the API for the file; the API checks the requester is
-  allowed to see *this* file for *this* tenant, then returns a signed GET URL
-  (a few minutes' expiry).
-- **Two S3 clients, not one, because a SigV4 signature covers the host.**
+```ts
+interface StorageService {
+  put(key: string, stream: Readable, meta: { contentType: string }): Promise<void>;
+  getDownloadUrl(key: string, filename: string): Promise<string>;
+  delete(key: string): Promise<void>;
+}
+```
+
+Everything else in the app talks to `getStorageService()` and never knows
+which driver is behind it. `STORAGE_DRIVER` (`local` | `s3`) picks the driver:
+
+- **`local`** (dev/test default) — writes under `STORAGE_LOCAL_PATH`
+  (`./storage-data` by default; gitignored, outside any public folder) on
+  the API's own disk. `getDownloadUrl()` doesn't point at the filesystem
+  directly; it returns an API URL,
+  `/api/v1/files/download?token=<signed-token>`, where the token is an
+  HMAC-signed `{ key, filename, exp }` payload (5-minute expiry, signed with
+  `FILE_TOKEN_SECRET`). `GET /files/download` verifies the signature and
+  expiry, then streams the file back with
+  `Content-Disposition: attachment`. This route is deliberately **not**
+  behind `requireAuth` — possessing a validly-signed, unexpired token *is*
+  the authorization (same model as an S3 presigned URL); the actual
+  permission check (is this caller allowed to see *this* file for *this*
+  tenant?) already happened in whichever module called `getDownloadUrl()`
+  in the first place.
+- **`s3`** (prod) — uses `@aws-sdk/client-s3` against a real S3-compatible
+  bucket, keyed `company/<companyId>/leave-documents/<leaveRequestId>/<fileId>`.
+  `getDownloadUrl()` returns a real presigned S3 GET URL (5-minute expiry),
+  bypassing `/files/download` entirely.
+
+  **Two S3 clients, not one, because a SigV4 signature covers the host.**
   Rewriting the host of an already-signed URL breaks it
   (`SignatureDoesNotMatch`), since the signature is computed over the
-  request including the `Host` header. So the API holds:
+  request including the `Host` header. So the `s3` driver holds:
   - a **main client**, configured with `S3_ENDPOINT`, used for every
-    server-to-MinIO operation (uploads, metadata) — in dev this is
-    `http://localhost:9000`, since `pnpm dev` runs the API directly on the
-    host (not inside the Docker network), so `localhost` is correct, not the
-    Docker Compose service name `minio`;
+    server-to-S3 operation (uploads, deletes);
   - a **presigning client**, configured with `endpoint = S3_PUBLIC_URL` and
-    used *only* to generate the GET URL returned to clients — in dev this is
-    the machine's LAN IP (e.g. `http://192.168.x.x:9000`), since a phone
-    running the Expo app can't resolve `localhost` as "this computer"; in
-    prod it's the real public/CDN endpoint for the bucket.
+    used *only* to generate the GET URL returned to clients — in dev this
+    would be the machine's LAN IP, since a phone running the Expo app can't
+    resolve `localhost` as "this computer"; in prod it's the real
+    public/CDN endpoint for the bucket.
 
-  Both clients point at the same MinIO instance and the same credentials —
-  only the `endpoint` differs — so this is a few lines of S3-client setup in
-  `apps/api/src/lib/storage.ts`, not two separate services.
-- The object key is never guessable from outside (UUIDs), and the bucket
-  itself is private — only the API's credentials can mint signed URLs.
+The DB stores only metadata (object key, original filename, content type,
+size, uploader, status) — never the file bytes, regardless of driver.
+
+**Upload goes through the API, not a client-to-storage pre-signed PUT.** The
+client sends a `multipart/form-data` request straight to
+`POST /leave-requests/:id/documents`. The API, in order:
+1. checks the caller is permitted to upload to *this* leave request (owner,
+   within the tenant),
+2. enforces the size limit (max 5 MB) at the multipart-parser level so an
+   oversized body is rejected before it's fully buffered,
+3. validates the declared content type against the allow-list
+   (`jpg`/`png`/`pdf`), **then re-checks the actual file content by magic
+   bytes** (via the `file-type` package) — a renamed `.exe` with a `.pdf`
+   extension and a claimed `application/pdf` content type is rejected,
+   since the declared type is never trusted on its own,
+4. calls `storageService.put()` with the validated file,
+5. writes the `leave_request_documents` metadata row.
+
+Routing uploads through the API (rather than a direct-to-storage pre-signed
+PUT) keeps validation server-side and in one place, and avoids exposing the
+storage backend's endpoint to the client — simpler to get right for a 5 MB
+document upload than the pre-signed-PUT pattern is worth in Phase 1.
+
+> **History**: Phase 1 originally planned MinIO as the S3-compatible dev
+> storage (Step 1.1/1.2). It was dropped in Step 1.4: as of then,
+> `minio/minio` required an authenticated pull on both Docker Hub and
+> quay.io (MinIO's 2024 licensing change), with no good anonymous-pull
+> alternative. Rather than keep working around that, file storage moved
+> behind the `StorageService` interface above, with a dependency-free
+> `local` driver for dev/test and the `s3` driver (usable against real S3,
+> or any other S3-compatible provider that doesn't have MinIO's
+> distribution restrictions) for prod.
+
+The object key is never guessable from outside (UUIDs), and - for the `s3`
+driver - the bucket itself is private; only the API's credentials can mint
+signed URLs. The `local` driver's equivalent guarantee is the HMAC
+signature on the download token.
 
 ## 7. Notifications (Phase 1 scope: in-app only)
 
@@ -262,8 +297,10 @@ approved/rejected → notify employee). The web/mobile clients poll
 
 ## 8. Environments
 
-- **Dev**: `docker-compose.yml` runs Postgres, MinIO, and Mailpit (catches
-  outbound email locally — not used for real sending until a later phase).
+- **Dev**: `docker-compose.yml` runs Postgres and Mailpit (catches outbound
+  email locally — not used for real sending until a later phase). File
+  storage doesn't need a container in dev - see §6, the `local`
+  `StorageService` driver just uses the API's own disk.
 - Config is loaded from `.env` and validated with Zod at boot (`apps/api/src/config.ts`)
   so a missing/malformed env var fails fast with a clear error instead of a
   confusing runtime crash later.

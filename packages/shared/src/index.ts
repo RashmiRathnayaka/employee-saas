@@ -8,3 +8,7 @@ export * from "./users.js";
 export * from "./departments.js";
 export * from "./designations.js";
 export * from "./employees.js";
+export * from "./leaveTypes.js";
+export * from "./leaveBalances.js";
+export * from "./leaveRequests.js";
+export * from "./leaveDocuments.js";
