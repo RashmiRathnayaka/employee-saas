@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   ChangePasswordRequestSchema,
   LoginRequestSchema,
+  PlatformLoginRequestSchema,
   type LoginResponse,
   type MeResponse,
   type RefreshResponse,
@@ -10,9 +11,9 @@ import { asyncHandler } from "../../lib/asyncHandler.js";
 import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
-import { loginRateLimit } from "../../middleware/loginRateLimit.js";
+import { loginRateLimit, platformLoginRateLimit } from "../../middleware/loginRateLimit.js";
 import { validateBody } from "../../middleware/validate.js";
-import { changePassword, login, logout, refresh, toAuthUser } from "./auth.service.js";
+import { changePassword, login, logout, platformLogin, refresh, toAuthUser } from "./auth.service.js";
 import { clearAuthCookies, getRefreshTokenFromRequest, isMobileClient, setAuthCookies } from "./cookies.js";
 
 export const authRouter = Router();
@@ -31,6 +32,32 @@ authRouter.post(
     const { user, accessToken, refreshToken } = await login({
       companyCode,
       identifier,
+      password,
+      userAgent: normalizeUserAgent(req.headers["user-agent"]),
+    });
+
+    const body: LoginResponse = { user: toAuthUser(user) };
+
+    if (isMobileClient(req)) {
+      body.accessToken = accessToken;
+      body.refreshToken = refreshToken;
+    } else {
+      setAuthCookies(res, { accessToken, refreshToken });
+    }
+
+    res.status(200).json(body);
+  }),
+);
+
+authRouter.post(
+  "/auth/platform/login",
+  platformLoginRateLimit,
+  validateBody(PlatformLoginRequestSchema),
+  asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+
+    const { user, accessToken, refreshToken } = await platformLogin({
+      email,
       password,
       userAgent: normalizeUserAgent(req.headers["user-agent"]),
     });

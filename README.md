@@ -108,16 +108,29 @@ Platform-level account - log in with **no company code**, email only:
 |---|---|
 | SUPER_ADMIN | superadmin@platform.test |
 
-## Auth (Step 1.2)
+## Auth (Steps 1.2-1.3)
 
 `POST /api/v1/auth/login` takes `{ companyCode, identifier, password }` -
-`identifier` is either an employee code or an email, scoped to the company
-resolved from `companyCode`. The platform `SUPER_ADMIN` account has no
-company, so it logs in by omitting `companyCode` entirely (email only).
+`companyCode` is required; `identifier` is either an employee code or an
+email, scoped to the company resolved from `companyCode`. The platform
+`SUPER_ADMIN` account has no company, so it uses a **separate** endpoint,
+`POST /api/v1/auth/platform/login`, with `{ email, password }` and no
+company code - rate-limited more tightly (5/15min per IP, vs. 10/15min per
+IP+company-code on the regular login) since a compromised platform account
+can affect every company. **MFA for platform admin accounts is planned for
+Phase 4** - not implemented yet.
+
 Every failure (unknown company, unknown identifier, wrong password,
 deactivated user, suspended company) returns the exact same `401
 INVALID_CREDENTIALS` response, so a caller can't use the error to figure out
-which part was wrong. Login is rate-limited per IP + company code.
+which part was wrong.
+
+A freshly created login (new employee, new standalone user, a new company's
+first admin) gets a one-time system-generated password and
+`mustChangePassword: true`. While that flag is set, every endpoint except
+`POST /auth/change-password` returns `403 PASSWORD_CHANGE_REQUIRED` -
+checked fresh on every request, so it can't be bypassed by reusing an old
+access token.
 
 **Web vs. mobile clients** - send the header `X-Client: mobile` to get the
 mobile behavior; omit it for the default (web) behavior:
@@ -138,6 +151,38 @@ Access tokens are short-lived JWTs (15 min, claims: `userId`, `companyId`,
 only ever stores a SHA-256 hash of one, never the token itself. See the
 report for Step 1.2 for a plain-language explanation of refresh rotation.
 
+## Company & employee management (Step 1.3)
+
+Full CRUD for companies (`SUPER_ADMIN` only), a company's own profile,
+settings, and holidays, standalone users, departments, designations, and
+employees - see `docs/api-phase1.md` for the endpoint list and
+`docs/permissions.md` for who can do what.
+
+A few things worth knowing:
+- **Employee codes** (`employeeIdPrefix` + a running number from
+  `company_settings`) are generated with an atomic `UPDATE ... RETURNING` -
+  two employees created at the same instant can never collide.
+- **Manager assignment** is rejected if the proposed manager isn't an active
+  employee in the same company, is the employee themselves, or would create
+  a reporting cycle (walks the chain up from the proposed manager looking
+  for the employee being updated).
+- **Deactivating an employee** also deactivates their login and revokes all
+  their refresh tokens. Their pending leave requests are untouched (that's
+  Step 1.4).
+- **A company always keeps at least one active `COMPANY_ADMIN`**: an admin
+  can't deactivate themselves or remove their own admin role, and the last
+  active admin can't be removed by anyone - whether through the users
+  endpoints or (for the rare case where an admin was promoted from an
+  employee login and still has an employee profile) the employee
+  deactivation endpoint.
+- Department/designation names are unique per company **case-insensitively**
+  ("Engineering" and "engineering" collide) via a hand-written functional
+  index - see `docs/database-schema.md`.
+
+**Known limitation**: `PATCH /users/:id` changes role only; there's no
+password-reset-by-admin endpoint yet (not in this step's test list - a
+clean follow-up for a later step).
+
 ## Mobile (Expo) on a LAN device
 
 `apps/api/.env`'s `S3_PUBLIC_URL` defaults to `http://localhost:9000`, which
@@ -149,6 +194,7 @@ phone on the same network can resolve signed file-download URLs.
 
 - `apps/web` is a placeholder Vite/React page — HR/Manager dashboards land in Step 1.5.
 - `apps/mobile` is a placeholder workspace package (no Expo app yet) — lands in Step 1.6.
-- No employee or leave endpoints yet — only `/api/v1/health` and `/api/v1/auth/*`. Employees/departments land in Step 1.3, leave in Step 1.4.
+- No leave module yet (requests, approvals, balances endpoints, sick leave documents) — that's Step 1.4.
 - MinIO isn't running yet (see above) — file upload/download code also lands in Step 1.4.
-- No employee-management UI to assign roles/managers yet — seed data is the only way to get test accounts for now.
+- No employee-management UI yet — the API exists (Step 1.3) but there's no web/mobile screen to use it from.
+- No password-reset-by-admin endpoint — see the Auth section above.

@@ -1,24 +1,29 @@
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
+import { DEFAULT_LEAVE_TYPES } from "../src/lib/defaultLeaveTypes.js";
 
 const prisma = new PrismaClient();
 
 const SEED_PASSWORD = "Passw0rd!";
 const SUPER_ADMIN_EMAIL = "superadmin@platform.test";
 
-type LeaveTypeSeed = {
-  name: string;
-  code: string;
-  defaultAnnualDays: number;
-  requiresProof: boolean;
-  carryForwardAllowed: boolean;
-};
+// Department/Designation uniqueness is case-insensitive via a hand-written
+// functional index (see migrations/), which Prisma's schema DSL - and so
+// its generated upsert `where` types - doesn't know about. Find-or-create
+// by name (case-insensitively) instead of upsert.
+async function findOrCreateDepartment(companyId: string, name: string) {
+  const existing = await prisma.department.findFirst({
+    where: { companyId, name: { equals: name, mode: "insensitive" } },
+  });
+  return existing ?? prisma.department.create({ data: { companyId, name } });
+}
 
-const LEAVE_TYPES: LeaveTypeSeed[] = [
-  { name: "Annual Leave", code: "ANNUAL", defaultAnnualDays: 14, requiresProof: false, carryForwardAllowed: true },
-  { name: "Casual Leave", code: "CASUAL", defaultAnnualDays: 7, requiresProof: false, carryForwardAllowed: false },
-  { name: "Sick Leave", code: "SICK", defaultAnnualDays: 7, requiresProof: true, carryForwardAllowed: false },
-];
+async function findOrCreateDesignation(companyId: string, name: string) {
+  const existing = await prisma.designation.findFirst({
+    where: { companyId, name: { equals: name, mode: "insensitive" } },
+  });
+  return existing ?? prisma.designation.create({ data: { companyId, name } });
+}
 
 async function seedSuperAdmin(passwordHash: string) {
   const existing = await prisma.user.findFirst({ where: { companyId: null, email: SUPER_ADMIN_EMAIL } });
@@ -55,38 +60,15 @@ async function seedCompany(params: {
     create: { companyId: company.id },
   });
 
-  const engineering = await prisma.department.upsert({
-    where: { companyId_name: { companyId: company.id, name: "Engineering" } },
-    update: {},
-    create: { companyId: company.id, name: "Engineering" },
-  });
+  const engineering = await findOrCreateDepartment(company.id, "Engineering");
+  const humanResources = await findOrCreateDepartment(company.id, "Human Resources");
 
-  const humanResources = await prisma.department.upsert({
-    where: { companyId_name: { companyId: company.id, name: "Human Resources" } },
-    update: {},
-    create: { companyId: company.id, name: "Human Resources" },
-  });
-
-  const softwareEngineer = await prisma.designation.upsert({
-    where: { companyId_name: { companyId: company.id, name: "Software Engineer" } },
-    update: {},
-    create: { companyId: company.id, name: "Software Engineer" },
-  });
-
-  const teamLead = await prisma.designation.upsert({
-    where: { companyId_name: { companyId: company.id, name: "Team Lead" } },
-    update: {},
-    create: { companyId: company.id, name: "Team Lead" },
-  });
-
-  const hrSpecialist = await prisma.designation.upsert({
-    where: { companyId_name: { companyId: company.id, name: "HR Specialist" } },
-    update: {},
-    create: { companyId: company.id, name: "HR Specialist" },
-  });
+  const softwareEngineer = await findOrCreateDesignation(company.id, "Software Engineer");
+  const teamLead = await findOrCreateDesignation(company.id, "Team Lead");
+  const hrSpecialist = await findOrCreateDesignation(company.id, "HR Specialist");
 
   const leaveTypes = await Promise.all(
-    LEAVE_TYPES.map((leaveType) =>
+    DEFAULT_LEAVE_TYPES.map((leaveType) =>
       prisma.leaveType.upsert({
         where: { companyId_code: { companyId: company.id, code: leaveType.code } },
         update: {},

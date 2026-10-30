@@ -112,7 +112,7 @@ pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the tes
 - [x] Step 0 — Design docs (architecture, ER diagram, permission matrix)
 - [x] 1.1 Monorepo + Docker + Prisma + health check + seed
 - [x] 1.2 Auth, roles, tenant isolation + tests
-- [ ] 1.3 Company setup, departments, designations, employees
+- [x] 1.3 Company setup, departments, designations, employees
 - [ ] 1.4 Leave module + sick leave documents
 - [ ] 1.5 Web portal (HR + Manager)
 - [ ] 1.6 Mobile MVP

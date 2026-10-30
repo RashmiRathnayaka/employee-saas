@@ -9,7 +9,7 @@ function fakeRequest(auth?: RequestAuth): Request {
 
 describe("requireRole", () => {
   it("calls next() with no error when the role matches", () => {
-    const req = fakeRequest({ userId: "u1", companyId: "c1", role: "HR", employeeId: null });
+    const req = fakeRequest({ userId: "u1", companyId: "c1", role: "HR", employeeId: null, mustChangePassword: false });
     const next = vi.fn();
 
     requireRole("HR", "COMPANY_ADMIN")(req, {} as Response, next);
@@ -18,7 +18,13 @@ describe("requireRole", () => {
   });
 
   it("blocks a mismatched role with 403", () => {
-    const req = fakeRequest({ userId: "u1", companyId: "c1", role: "EMPLOYEE", employeeId: "e1" });
+    const req = fakeRequest({
+      userId: "u1",
+      companyId: "c1",
+      role: "EMPLOYEE",
+      employeeId: "e1",
+      mustChangePassword: false,
+    });
     const next = vi.fn();
 
     requireRole("HR", "COMPANY_ADMIN")(req, {} as Response, next);

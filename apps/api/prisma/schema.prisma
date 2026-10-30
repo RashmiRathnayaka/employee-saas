@@ -59,7 +59,10 @@ model Department {
 
   employees Employee[]
 
-  @@unique([companyId, name])
+  // Case-insensitive uniqueness ("Engineering" vs "engineering") is enforced
+  // by a functional unique index added by hand in the migration SQL - see
+  // migrations/*_case_insensitive_names/migration.sql - since Prisma's
+  // schema DSL can't express a functional (lower()) index.
   @@index([companyId])
   @@map("departments")
 }
@@ -73,7 +76,8 @@ model Designation {
 
   employees Employee[]
 
-  @@unique([companyId, name])
+  // Case-insensitive uniqueness enforced by a hand-written functional unique
+  // index in the migration SQL - see Department above for why.
   @@index([companyId])
   @@map("designations")
 }
@@ -119,6 +123,7 @@ model User {
   passwordHash String
   role         UserRole
   status       UserStatus @default(ACTIVE)
+  mustChangePassword Boolean @default(false)
   lastLoginAt  DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

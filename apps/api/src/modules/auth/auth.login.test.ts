@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import request from "supertest";
 import { createApp } from "../../app.js";
 import { createTestCompany, createTestUser, loginAs } from "../../test/helpers.js";
 
@@ -96,19 +97,14 @@ describe("POST /api/v1/auth/login", () => {
     expect(res.body.error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  it("logs in a super admin with no company code", async () => {
+  it("rejects a login attempt with no company code", async () => {
     const app = createApp();
-    const { password } = await createTestUser({
-      companyId: null,
-      role: "SUPER_ADMIN",
-      email: "root@platform.test",
-    });
 
-    const res = await loginAs(app, { identifier: "root@platform.test", password, clientType: "mobile" });
+    const res = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ identifier: "someone@example.test", password: "whatever1" });
 
-    expect(res.status).toBe(200);
-    expect(res.body.user.role).toBe("SUPER_ADMIN");
-    expect(res.body.user.companyId).toBeNull();
+    expect(res.status).toBe(400);
   });
 
   it("rate-limits repeated login attempts for the same IP + company code", async () => {

@@ -5,4 +5,5 @@ export type RequestAuth = {
   companyId: string | null;
   role: Role;
   employeeId: string | null;
+  mustChangePassword: boolean;
 };

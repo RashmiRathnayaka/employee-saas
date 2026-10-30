@@ -15,11 +15,29 @@ only). Every row below is also subject to tenant isolation
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| POST | `/auth/login` | public | Log in with company code + (employee code or email) + password; returns access + refresh tokens |
+| POST | `/auth/login` | public | Log in with company code + (employee code or email) + password (company code required); returns access + refresh tokens |
+| POST | `/auth/platform/login` | public | `SUPER_ADMIN`-only login: email + password, no company code. Separate endpoint, separate (stricter, IP-only) rate limit |
 | POST | `/auth/refresh` | authenticated (refresh token) | Rotate refresh token, issue a new access token |
 | POST | `/auth/logout` | any | Revoke the current refresh token |
 | POST | `/auth/change-password` | any | Change own password |
 | GET | `/auth/me` | any | Return current user + role + company + (if applicable) employee profile |
+
+`/auth/login` requires `companyCode` — there is no company-code-optional
+path. `SUPER_ADMIN` accounts have no company, so they never use
+`/auth/login`; they use `/auth/platform/login` instead, which only ever
+matches `SUPER_ADMIN` accounts and is rate-limited more tightly (5/15min per
+IP, vs. 10/15min per IP+company-code) since a compromised platform account
+can affect every company on the platform. **MFA for platform admin accounts
+is planned for Phase 4** (not implemented in Phase 1) — until then, this
+tighter rate limit plus a strong generated password is the only extra
+protection on this endpoint.
+
+Until the password is changed, a user flagged `mustChangePassword` (set on
+any newly-created login) gets `403 PASSWORD_CHANGE_REQUIRED` from every
+endpoint except `POST /auth/change-password` — including both login
+endpoints' *subsequent* calls and `GET /auth/me` (the flag itself is
+returned in the login response body, so a client doesn't need `/auth/me` to
+discover it immediately after logging in).
 
 ## Companies (platform / Super Admin)
 

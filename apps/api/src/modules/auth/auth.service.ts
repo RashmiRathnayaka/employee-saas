@@ -18,11 +18,12 @@ export function toAuthUser(user: User): AuthUser {
     employeeId: user.employeeId,
     email: user.email,
     role: user.role,
+    mustChangePassword: user.mustChangePassword,
   };
 }
 
 type LoginParams = {
-  companyCode?: string;
+  companyCode: string;
   identifier: string;
   password: string;
   userAgent?: string;
@@ -33,31 +34,22 @@ type LoginTarget = {
   user: User | null;
 };
 
-async function resolveLoginTarget(companyCode: string | undefined, identifier: string): Promise<LoginTarget> {
-  if (companyCode) {
-    const company = await platformPrisma.company.findUnique({ where: { code: companyCode } });
-    if (!company || company.status !== "ACTIVE") {
-      return { company, user: null };
-    }
-
-    const employee = await platformPrisma.employee.findFirst({
-      where: { companyId: company.id, employeeCode: identifier },
-      include: { user: true },
-    });
-    if (employee?.user) {
-      return { company, user: employee.user };
-    }
-
-    const user = await platformPrisma.user.findFirst({ where: { companyId: company.id, email: identifier } });
-    return { company, user };
+async function resolveLoginTarget(companyCode: string, identifier: string): Promise<LoginTarget> {
+  const company = await platformPrisma.company.findUnique({ where: { code: companyCode } });
+  if (!company || company.status !== "ACTIVE") {
+    return { company, user: null };
   }
 
-  // No company code: only SUPER_ADMIN accounts (companyId null) can match,
-  // via email - they have no employee code or company to scope by.
-  const user = await platformPrisma.user.findFirst({
-    where: { companyId: null, email: identifier, role: "SUPER_ADMIN" },
+  const employee = await platformPrisma.employee.findFirst({
+    where: { companyId: company.id, employeeCode: identifier },
+    include: { user: true },
   });
-  return { company: null, user };
+  if (employee?.user) {
+    return { company, user: employee.user };
+  }
+
+  const user = await platformPrisma.user.findFirst({ where: { companyId: company.id, email: identifier } });
+  return { company, user };
 }
 
 async function auditLoginFailure(params: {
@@ -119,6 +111,53 @@ export async function login(params: LoginParams) {
       companyId: user.companyId,
       actorUserId: user.id,
       action: "LOGIN_SUCCEEDED",
+      entityType: "User",
+      entityId: user.id,
+    });
+  });
+
+  return { user, accessToken, refreshToken };
+}
+
+export async function platformLogin(params: { email: string; password: string; userAgent?: string }) {
+  const { email, password, userAgent } = params;
+
+  const user = await platformPrisma.user.findFirst({
+    where: { companyId: null, email, role: "SUPER_ADMIN" },
+  });
+
+  if (!user) {
+    await auditLoginFailure({ companyId: null, actorUserId: null, reason: "not_found", identifier: email });
+    throw genericLoginError();
+  }
+
+  const passwordOk = await argon2.verify(user.passwordHash, password);
+  if (!passwordOk) {
+    await auditLoginFailure({ companyId: null, actorUserId: user.id, reason: "wrong_password", identifier: email });
+    throw genericLoginError();
+  }
+
+  if (user.status !== "ACTIVE") {
+    await auditLoginFailure({ companyId: null, actorUserId: user.id, reason: "user_deactivated", identifier: email });
+    throw genericLoginError();
+  }
+
+  const accessToken = signAccessToken({ userId: user.id, companyId: user.companyId, role: user.role });
+  const { raw: refreshToken, hash } = generateRefreshToken();
+
+  await platformPrisma.$transaction(async (tx) => {
+    await tx.refreshToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: hash,
+        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+        userAgent,
+      },
+    });
+    await writeAudit(tx, {
+      companyId: null,
+      actorUserId: user.id,
+      action: "PLATFORM_LOGIN_SUCCEEDED",
       entityType: "User",
       entityId: user.id,
     });
@@ -211,7 +250,7 @@ export async function changePassword(params: { userId: string; currentPassword: 
   const newHash = await argon2.hash(params.newPassword);
 
   await platformPrisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
+    await tx.user.update({ where: { id: user.id }, data: { passwordHash: newHash, mustChangePassword: false } });
     await tx.refreshToken.updateMany({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() },

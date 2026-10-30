@@ -2,11 +2,17 @@ import { z } from "zod";
 import { RoleSchema } from "./roles.js";
 
 export const LoginRequestSchema = z.object({
-  companyCode: z.string().trim().min(1).optional(),
+  companyCode: z.string().trim().min(1),
   identifier: z.string().trim().min(1),
   password: z.string().min(1),
 });
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
+export const PlatformLoginRequestSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(1),
+});
+export type PlatformLoginRequest = z.infer<typeof PlatformLoginRequestSchema>;
 
 export const ChangePasswordRequestSchema = z.object({
   currentPassword: z.string().min(1),
@@ -20,6 +26,7 @@ export const AuthUserSchema = z.object({
   employeeId: z.string().nullable(),
   email: z.string().nullable(),
   role: RoleSchema,
+  mustChangePassword: z.boolean(),
 });
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 

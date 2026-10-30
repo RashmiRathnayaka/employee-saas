@@ -105,6 +105,7 @@ erDiagram
         string passwordHash
         string role "SUPER_ADMIN|COMPANY_ADMIN|HR|MANAGER|EMPLOYEE"
         string status "ACTIVE | DEACTIVATED"
+        boolean mustChangePassword "default false"
         timestamptz lastLoginAt
         timestamptz createdAt
         timestamptz updatedAt
@@ -232,8 +233,11 @@ erDiagram
 - `company_settings.companyId` — PK and FK, one row per company (1:1), created
   automatically when a company is created, holding the configurable defaults
   from CLAUDE.md §Business defaults.
-- `departments`: `UNIQUE (companyId, name)`; index on `companyId`.
-- `designations`: `UNIQUE (companyId, name)`; index on `companyId`.
+- `departments`: `UNIQUE (companyId, lower(name))` — a **functional** unique
+  index (on `lower(name)`, not `name`), so "Engineering" and "engineering"
+  collide; index on `companyId`.
+- `designations`: same pattern — `UNIQUE (companyId, lower(name))`; index on
+  `companyId`.
 - `employees`: `UNIQUE (companyId, employeeCode)`; index on `companyId`; index
   on `(companyId, managerId)` to make "give me my team" (Manager view) fast;
   `managerId` is nullable and self-referential, enforced to point to an
@@ -364,6 +368,13 @@ erDiagram
   `actorUserId: null` and the attempted identifier/IP captured in `metadata`.
   A successful login, or a failure against a *resolved* user (wrong
   password, deactivated account), still sets `actorUserId` to that user.
+- **`users.mustChangePassword`** (added during Step 1.3): set to `true`
+  whenever a login is created with a system-generated temporary password
+  (new employee logins, new standalone user accounts, a new company's first
+  `COMPANY_ADMIN`). While `true`, every endpoint except
+  `POST /auth/change-password` returns `403 PASSWORD_CHANGE_REQUIRED` -
+  enforced in `requireAuth` so it's impossible to forget on a new route.
+  Changing the password clears the flag.
 - Every table above except `companies` carries `companyId` directly — even
   `leave_balances` and `leave_request_documents`, which are technically
   reachable via a join through `employees`/`leave_requests` — so the
