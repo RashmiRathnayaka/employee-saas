@@ -1,0 +1,16 @@
+{
+  "name": "@employee-saas/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"no lint configured yet\"",
+    "test": "echo \"no tests yet\""
+  },
+  "dependencies": {
+    "@employee-saas/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

@@ -97,17 +97,19 @@ Do not add new frameworks or major libraries without explaining why and asking f
 ## Commands
 _(Update this section as scripts are created.)_
 ```
-docker compose up -d     # start postgres, minio, mailpit
+docker compose up -d     # start postgres, mailpit (minio deferred - see README)
 pnpm install
 pnpm dev                 # run api + web
 pnpm test
+pnpm typecheck
+pnpm lint
 pnpm db:migrate
 pnpm db:seed
 ```
 
 ## Status
-- [ ] Step 0 — Design docs (architecture, ER diagram, permission matrix)
-- [ ] 1.1 Monorepo + Docker + Prisma + health check + seed
+- [x] Step 0 — Design docs (architecture, ER diagram, permission matrix)
+- [x] 1.1 Monorepo + Docker + Prisma + health check + seed
 - [ ] 1.2 Auth, roles, tenant isolation + tests
 - [ ] 1.3 Company setup, departments, designations, employees
 - [ ] 1.4 Leave module + sick leave documents
