@@ -95,6 +95,7 @@ Do not add new frameworks or major libraries without explaining why and asking f
 8. Save every step report to `docs/reports/step-X.md` and commit it.
 9. The developer (Rashmi) is learning this stack. When you introduce a new concept or pattern, explain it briefly in plain language.
 10. Push may fail on this machine due to an SSL issue; if it does, tell the developer to push manually and continue.
+11. Never truncate, reset or reseed the DEV database without asking the developer first. The test database may be reset freely.
 
 ## Commands
 _(Update this section as scripts are created.)_
