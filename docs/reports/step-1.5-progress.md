@@ -70,16 +70,23 @@ Known simplifications (Phase 1 scale, not a correctness problem, just not "real"
 - The "Pending" tab merges two separate paginated calls (status=PENDING_MANAGER + status=PENDING_HR) client-side since the API's status filter is single-valued; pagination controls are hidden for that tab specifically (fetches up to 100+100 and shows all, sorted by createdAt desc). Approved/Rejected/All tabs paginate normally server-side.
 - HR's leave-requests page employee/leave-type filter dropdowns fetch up to 100 rows (same `pageSize=100, no search` approach as the manager-picker dropdown from 1.5b) - revisit if a company exceeds 100 employees/leave types.
 
-## 1.5d — Settings, dashboards, Super Admin
-- [ ] Company settings page
-- [ ] Dashboards (HR/Admin, Manager) — add `GET /dashboard/summary` if missing (with tests incl. cross-tenant + manager-scope)
-- [ ] Super Admin: companies list, create company, suspend/reactivate
-- [ ] Playwright smoke test (skip + note if browser download fails)
-- [ ] README update (how to run web, URL, seeded logins per role)
-- [ ] CLAUDE.md status update
-- [ ] Full workspace typecheck/lint/test
-- [ ] commit, attempt push
-- [ ] Write `docs/reports/step-1.5.md`
+## 1.5d — Settings, dashboards, Super Admin — DONE
+- [x] Company settings page (profile + primary colour, leave workflow, sick-leave proof deadline, working-days editor, employee ID prefix) - `CompanySettingsPage.tsx`
+- [x] Dashboards (HR/Admin: active employees, pending requests, proofs overdue, on leave today; Manager: team pending, team on leave today) - `DashboardPage.tsx`, new `GET /dashboard/summary` (role-scoped; tests include cross-tenant and manager-scope-only cases)
+- [x] Super Admin: companies list, create company (temp password shown once), suspend/reactivate with confirmation - `CompaniesPage.tsx`
+- [x] Playwright installed, Chromium downloaded successfully on this machine, e2e smoke test written and **passing**: employee applies -> manager approves -> employee sees APPROVED + the updated balance (`apps/web/e2e/leave-approval.spec.ts`, run via `pnpm --filter @employee-saas/web test:e2e`)
+- [x] Full workspace typecheck/lint/test clean, production build succeeds (re-verified fresh in this session)
+- [x] README updated (how to run the web app, URL, seeded logins per role)
+- [x] CLAUDE.md status updated
+- [x] commit, attempt push
+- [x] Write `docs/reports/step-1.5.md`
+
+Notes:
+- The e2e test uses dates ~2 weeks out (not next year) because `GET /leave-balances/me` only ever returns the *current* calendar year's balance row - a next-year date would move days in a balance row the page never displays, making the "updated balance" assertion unobservable. Discovered by actually running the test against the real dev DB, not assumed.
+- The e2e test cleans up after itself (revokes the request as COMPANY_ADMIN) so reruns on the same day don't collide via the overlap check.
+- This sub-step's work (dashboard endpoint, settings page, companies page, Playwright setup) landed in commit `a408d83` - committed by an automatic session-end safety net before the explicit per-substep commit in this file could run; verified its contents match what's described above and nothing was lost.
+
+**Step 1.5 is now fully complete (1.5a through 1.5d).**
 
 ## Key facts gathered (so a fresh session doesn't need to re-derive them)
 - `apps/web` was a bare placeholder (App.tsx, main.tsx, vite.config.ts with

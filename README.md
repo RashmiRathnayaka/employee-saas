@@ -8,7 +8,7 @@ permissions, API).
 
 ```
 apps/api        Node.js, Express, TypeScript (strict), Prisma, PostgreSQL, Zod, Vitest
-apps/web        React, TypeScript, Vite, React Router (Step 1.5)
+apps/web        React, TypeScript, Vite, React Router, TanStack Query, Tailwind (Step 1.5)
 apps/mobile     Expo (Step 1.6) — placeholder package for now
 packages/shared Zod schemas, shared types, enums (used by api, web, mobile)
 ```
@@ -223,6 +223,50 @@ for the full request-flow design this follows exactly.
   Managers can never view or download a document, even their own direct
   report's - only the leave *decision* is their concern.
 
+## Web portal (Step 1.5)
+
+Run `pnpm dev` (from the repo root) and open **http://localhost:5173**. The
+Vite dev server proxies `/api/*` to the API on port 4000, so the browser
+sees everything as same-origin and the httpOnly auth cookies work without
+any CORS setup.
+
+- Company sign-in: **http://localhost:5173/login** - company code + email
+  (or employee code) + password. Use any row from the "Seeded accounts"
+  table above.
+- Platform admin sign-in: **http://localhost:5173/platform/login** - email +
+  password, no company code. Use `superadmin@platform.test`.
+- The sidebar and available pages change by role (UX only - the API is the
+  real security boundary either way):
+  - **COMPANY_ADMIN**: Employees, Users, Departments, Designations, Leave
+    requests, Leave types, Holidays, My leave, Settings.
+  - **HR**: same as Company Admin minus Users' role-change/activate controls
+    (view + reset-password only) and minus Settings.
+  - **MANAGER**: Employees (scoped to direct reports = "my team"), Leave
+    requests (team view), My leave.
+  - **EMPLOYEE**: My leave only.
+  - **SUPER_ADMIN**: Companies (platform-wide), via the `/platform/login`
+    sign-in above.
+
+Web app commands (run from `apps/web`, or prefix with
+`pnpm --filter @employee-saas/web`):
+
+```bash
+pnpm dev          # Vite dev server on :5173 (also started by the root `pnpm dev`)
+pnpm test         # Vitest + React Testing Library + MSW component/unit tests
+pnpm test:e2e     # Playwright end-to-end smoke test against the real dev API -
+                   # needs the dev DB seeded and reachable; starts/reuses the
+                   # api+web dev servers itself
+pnpm typecheck
+pnpm lint
+pnpm build        # production build (tsc -b && vite build)
+```
+
+The Playwright test (`apps/web/e2e/leave-approval.spec.ts`) logs in as an
+employee, applies for leave, logs in as their manager to approve it, then
+logs back in as the employee to confirm the request shows `APPROVED` and the
+balance reflects it - then cleans up by revoking the request as
+`COMPANY_ADMIN` so reruns on the same day don't collide with it.
+
 ## Mobile (Expo) on a LAN device
 
 A phone running the Expo app needs to reach the API at your machine's LAN
@@ -236,8 +280,7 @@ IP in that case.
 
 ## Known limitations
 
-- `apps/web` is a placeholder Vite/React page — HR/Manager dashboards land in Step 1.5.
 - `apps/mobile` is a placeholder workspace package (no Expo app yet) — lands in Step 1.6.
-- No employee/leave-management UI yet — the API exists (Steps 1.3-1.4) but there's no web/mobile screen to use it from.
-- No in-app notification endpoints yet — rows are written (`createNotification`) but nothing reads them until Step 1.7.
+- No in-app notification UI yet — rows are written (`createNotification`) and a web screen to read them lands in Step 1.7.
 - Automated proof-deadline reminders aren't implemented — `leave_requests.proofDueAt` is stored but nothing currently acts on it.
+- The web portal's HR leave-requests "Pending" tab and its employee/leave-type filter dropdowns fetch up to 100 rows client-side rather than paginating server-side for every case — fine at Phase 1's scale, revisit if a company exceeds ~100 employees or concurrent pending requests.
