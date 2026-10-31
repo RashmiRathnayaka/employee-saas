@@ -34,6 +34,12 @@ export function LoginPage() {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === "NETWORK_ERROR") {
         setFormError(strings.errors.network);
+      } else if (error instanceof ApiClientError && error.code === "RATE_LIMITED") {
+        // Distinct from genericError - rate-limiting isn't a credentials
+        // signal, so surfacing it doesn't leak which part was wrong, and
+        // without this the user has no way to tell "wait a bit" apart from
+        // "your password is wrong".
+        setFormError(strings.login.rateLimited);
       } else {
         // Deliberately generic - never reveal which part (company code,
         // identifier, or password) was wrong.

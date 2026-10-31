@@ -24,6 +24,7 @@ export const strings = {
     submit: "Sign in",
     submitting: "Signing in...",
     genericError: "Invalid company code, employee code/email, or password.",
+    rateLimited: "Too many sign-in attempts. Please wait a few minutes and try again.",
     platformLinkPrompt: "Platform admin?",
     platformLink: "Sign in here",
   },
@@ -35,6 +36,7 @@ export const strings = {
     submit: "Sign in",
     submitting: "Signing in...",
     genericError: "Invalid email or password.",
+    rateLimited: "Too many sign-in attempts. Please wait a few minutes and try again.",
     backLink: "Back to company sign in",
   },
   changePassword: {

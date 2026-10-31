@@ -32,6 +32,8 @@ export function PlatformLoginPage() {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === "NETWORK_ERROR") {
         setFormError(strings.errors.network);
+      } else if (error instanceof ApiClientError && error.code === "RATE_LIMITED") {
+        setFormError(strings.platformLogin.rateLimited);
       } else {
         setFormError(strings.platformLogin.genericError);
       }

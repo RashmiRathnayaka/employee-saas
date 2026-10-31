@@ -81,4 +81,24 @@ describe("LoginPage", () => {
     expect(alert).toHaveTextContent(strings.login.genericError);
     expect(alert).not.toHaveTextContent("Some specific server detail");
   });
+
+  it("shows a distinct rate-limit message, not the generic 'wrong credentials' one", async () => {
+    server.use(
+      http.post("/api/v1/auth/login", () =>
+        HttpResponse.json({ error: { code: "RATE_LIMITED", message: "Too many login attempts. Try again later." } }, { status: 429 }),
+      ),
+    );
+
+    renderLoginPage();
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(strings.login.companyCode), "ACME");
+    await user.type(screen.getByLabelText(strings.login.identifier), "hr@acme.test");
+    await user.type(screen.getByLabelText(strings.login.password), "Passw0rd!");
+    await user.click(screen.getByRole("button", { name: strings.login.submit }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(strings.login.rateLimited);
+    expect(alert).not.toHaveTextContent(strings.login.genericError);
+  });
 });
