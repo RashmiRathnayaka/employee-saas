@@ -22,6 +22,8 @@ import { HrLeaveRequestsPage } from "./routes/HrLeaveRequestsPage";
 import { TeamLeaveRequestsPage } from "./routes/TeamLeaveRequestsPage";
 import { MyLeavePage } from "./routes/MyLeavePage";
 import { LeaveRequestDetailPage } from "./routes/LeaveRequestDetailPage";
+import { CompanySettingsPage } from "./routes/CompanySettingsPage";
+import { CompaniesPage } from "./routes/CompaniesPage";
 import { NotAllowedPage } from "./routes/NotAllowedPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
 
@@ -59,6 +61,12 @@ export function App() {
                     <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR", "MANAGER", "EMPLOYEE"]} />}>
                       <Route path="/my-leave" element={<MyLeavePage />} />
                       <Route path="/leave-requests/:id" element={<LeaveRequestDetailPage />} />
+                    </Route>
+                    <Route element={<RequireRole roles={["COMPANY_ADMIN"]} />}>
+                      <Route path="/settings" element={<CompanySettingsPage />} />
+                    </Route>
+                    <Route element={<RequireRole roles={["SUPER_ADMIN"]} />}>
+                      <Route path="/companies" element={<CompaniesPage />} />
                     </Route>
                   </Route>
                 </Route>

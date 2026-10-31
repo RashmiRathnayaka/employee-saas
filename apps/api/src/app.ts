@@ -17,6 +17,7 @@ import { leaveTypesRouter } from "./modules/leaveTypes/leaveTypes.routes.js";
 import { leaveBalancesRouter } from "./modules/leaveBalances/leaveBalances.routes.js";
 import { leaveRequestsRouter } from "./modules/leaveRequests/leaveRequests.routes.js";
 import { leaveDocumentsRouter } from "./modules/leaveDocuments/leaveDocuments.routes.js";
+import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 
 export function createApp() {
   const app = express();
@@ -42,6 +43,7 @@ export function createApp() {
   app.use("/api/v1", leaveBalancesRouter);
   app.use("/api/v1", leaveRequestsRouter);
   app.use("/api/v1", leaveDocumentsRouter);
+  app.use("/api/v1", dashboardRouter);
 
   app.use(errorHandler);
 

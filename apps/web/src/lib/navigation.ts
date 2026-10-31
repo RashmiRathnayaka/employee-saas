@@ -56,4 +56,14 @@ export const NAV_ITEMS: NavItem[] = [
     label: strings.nav.holidays,
     roles: ["COMPANY_ADMIN", "HR"],
   },
+  {
+    to: "/settings",
+    label: strings.nav.settings,
+    roles: ["COMPANY_ADMIN"],
+  },
+  {
+    to: "/companies",
+    label: strings.nav.companies,
+    roles: ["SUPER_ADMIN"],
+  },
 ];

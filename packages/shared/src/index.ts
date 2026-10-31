@@ -12,3 +12,4 @@ export * from "./leaveTypes.js";
 export * from "./leaveBalances.js";
 export * from "./leaveRequests.js";
 export * from "./leaveDocuments.js";
+export * from "./dashboard.js";

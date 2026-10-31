@@ -20,6 +20,11 @@ Thumbs.db
 
 coverage/
 
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
 apps/api/generated/
 apps/api/storage-data/
 apps/api/storage-data-test/

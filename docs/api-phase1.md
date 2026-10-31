@@ -150,6 +150,12 @@ discover it immediately after logging in).
 | PATCH | `/notifications/:id/read` | any (own only) | Mark one notification read |
 | PATCH | `/notifications/read-all` | any | Mark all own notifications read |
 
+## Dashboard
+
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| GET | `/dashboard/summary` | COMPANY_ADMIN, HR, MANAGER | Role-scoped summary stats. COMPANY_ADMIN/HR get `{scope:"ADMIN", activeEmployees, pendingLeaveRequests, proofsOverdue, onLeaveToday}`; MANAGER gets `{scope:"MANAGER", teamPendingRequests, teamOnLeaveToday}` (own direct reports only) |
+
 ## Audit logs
 
 | Method | Path | Role | Purpose |
