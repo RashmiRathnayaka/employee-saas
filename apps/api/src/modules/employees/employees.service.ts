@@ -172,7 +172,13 @@ export async function listEmployees(params: {
   }
 
   const [data, total] = await Promise.all([
-    tenant.employee.findMany({ where, skip, take: params.pageSize, orderBy: { employeeCode: "asc" } }),
+    tenant.employee.findMany({
+      where,
+      skip,
+      take: params.pageSize,
+      orderBy: { employeeCode: "asc" },
+      include: { user: { select: { id: true } } },
+    }),
     tenant.employee.count({ where }),
   ]);
   return { data, total };
@@ -185,7 +191,10 @@ export async function getEmployeeById(params: {
   requesterEmployeeId: string | null;
 }) {
   const tenant = getTenantPrisma(params.companyId);
-  const employee = await tenant.employee.findUnique({ where: { id: params.employeeId } });
+  const employee = await tenant.employee.findUnique({
+    where: { id: params.employeeId },
+    include: { user: { select: { id: true } } },
+  });
   if (!employee) {
     throw new ApiError(404, "NOT_FOUND", "Employee not found.");
   }
@@ -236,7 +245,11 @@ export async function updateEmployee(params: {
   }
 
   return tenant.$transaction(async (tx) => {
-    const updated = await tx.employee.update({ where: { id: params.employeeId }, data: params.data });
+    const updated = await tx.employee.update({
+      where: { id: params.employeeId },
+      data: params.data,
+      include: { user: { select: { id: true } } },
+    });
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,
@@ -280,7 +293,11 @@ export async function updateEmployeeStatus(params: {
   }
 
   return tenant.$transaction(async (tx) => {
-    const updated = await tx.employee.update({ where: { id: params.employeeId }, data: { status: params.status } });
+    const updated = await tx.employee.update({
+      where: { id: params.employeeId },
+      data: { status: params.status },
+      include: { user: { select: { id: true } } },
+    });
 
     if (params.status === "INACTIVE" && linkedUser) {
       await tx.user.update({ where: { id: linkedUser.id }, data: { status: "DEACTIVATED" } });
@@ -342,7 +359,10 @@ export async function updateEmployeeStatus(params: {
 
 export async function getOwnProfile(params: { companyId: string; employeeId: string }) {
   const tenant = getTenantPrisma(params.companyId);
-  const employee = await tenant.employee.findUnique({ where: { id: params.employeeId } });
+  const employee = await tenant.employee.findUnique({
+    where: { id: params.employeeId },
+    include: { user: { select: { id: true } } },
+  });
   if (!employee) {
     throw new ApiError(404, "NOT_FOUND", "Employee profile not found.");
   }
@@ -357,7 +377,11 @@ export async function updateOwnProfile(params: {
 }) {
   const tenant = getTenantPrisma(params.companyId);
   return tenant.$transaction(async (tx) => {
-    const updated = await tx.employee.update({ where: { id: params.employeeId }, data: { phone: params.phone } });
+    const updated = await tx.employee.update({
+      where: { id: params.employeeId },
+      data: { phone: params.phone },
+      include: { user: { select: { id: true } } },
+    });
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,

@@ -10,7 +10,7 @@ type ConfirmDialogProps = {
   description?: string;
   confirmLabel?: string;
   destructive?: boolean;
-  onConfirm: () => Promise<void> | void;
+  onConfirm: () => unknown;
 };
 
 export function ConfirmDialog({

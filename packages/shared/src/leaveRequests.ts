@@ -35,6 +35,9 @@ export const LeaveRequestListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: LeaveRequestStatusSchema.optional(),
+  // Only honoured on /leave-requests (COMPANY_ADMIN, HR) and /leave-requests/team
+  // (MANAGER, further narrowed to their own direct reports either way).
+  employeeId: z.string().optional(),
 });
 export type LeaveRequestListQuery = z.infer<typeof LeaveRequestListQuerySchema>;
 

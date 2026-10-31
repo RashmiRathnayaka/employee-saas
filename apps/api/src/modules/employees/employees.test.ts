@@ -16,6 +16,35 @@ describe("employees module", () => {
     expect(res.status).toBe(403);
   });
 
+  it("exposes userId for the linked login account, and null when there is none", async () => {
+    const app = createApp();
+    const { token } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+
+    const withLoginRes = await request(app)
+      .post("/api/v1/employees")
+      .set("Authorization", token)
+      .send({
+        firstName: "Has",
+        lastName: "Login",
+        joiningDate: "2026-01-01",
+        createLogin: true,
+        loginEmail: "has-login@example.test",
+      });
+    expect(withLoginRes.body.employee.userId).toBe(withLoginRes.body.login.user.id);
+
+    const withoutLoginRes = await request(app)
+      .post("/api/v1/employees")
+      .set("Authorization", token)
+      .send({ firstName: "No", lastName: "Login", joiningDate: "2026-01-01" });
+    expect(withoutLoginRes.body.employee.userId).toBeNull();
+    expect(withoutLoginRes.body.login).toBeNull();
+
+    const getRes = await request(app)
+      .get(`/api/v1/employees/${withLoginRes.body.employee.id}`)
+      .set("Authorization", token);
+    expect(getRes.body.employee.userId).toBe(withLoginRes.body.login.user.id);
+  });
+
   it("EMPLOYEE cannot list employees", async () => {
     const app = createApp();
     const { token } = await setUpCompanyWithUser(app, { role: "EMPLOYEE", employeeCode: "EMP-001" });

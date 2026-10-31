@@ -4,12 +4,18 @@ import { queryClient } from "./lib/queryClient";
 import { ToastProvider } from "./lib/toast";
 import { AuthProvider } from "./lib/authContext";
 import { CompanyProvider } from "./lib/companyContext";
-import { RequireAuth } from "./layout/RouteGuard";
+import { RequireAuth, RequireRole } from "./layout/RouteGuard";
 import { AppShell } from "./layout/AppShell";
 import { LoginPage } from "./routes/LoginPage";
 import { PlatformLoginPage } from "./routes/PlatformLoginPage";
 import { ChangePasswordPage } from "./routes/ChangePasswordPage";
 import { DashboardPage } from "./routes/DashboardPage";
+import { EmployeesListPage } from "./routes/EmployeesListPage";
+import { CreateEmployeePage } from "./routes/CreateEmployeePage";
+import { EmployeeDetailPage } from "./routes/EmployeeDetailPage";
+import { DepartmentsPage } from "./routes/DepartmentsPage";
+import { DesignationsPage } from "./routes/DesignationsPage";
+import { UsersPage } from "./routes/UsersPage";
 import { NotAllowedPage } from "./routes/NotAllowedPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
 
@@ -28,6 +34,16 @@ export function App() {
                   <Route path="/not-allowed" element={<NotAllowedPage />} />
                   <Route element={<AppShell />}>
                     <Route path="/" element={<DashboardPage />} />
+                    <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR", "MANAGER"]} />}>
+                      <Route path="/employees" element={<EmployeesListPage />} />
+                      <Route path="/employees/:id" element={<EmployeeDetailPage />} />
+                    </Route>
+                    <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR"]} />}>
+                      <Route path="/employees/new" element={<CreateEmployeePage />} />
+                      <Route path="/departments" element={<DepartmentsPage />} />
+                      <Route path="/designations" element={<DesignationsPage />} />
+                      <Route path="/users" element={<UsersPage />} />
+                    </Route>
                   </Route>
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />

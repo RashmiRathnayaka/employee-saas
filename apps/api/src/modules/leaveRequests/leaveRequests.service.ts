@@ -270,10 +270,13 @@ export async function listTeamLeaveRequests(params: {
   page: number;
   pageSize: number;
   status?: string;
+  employeeId?: string;
 }) {
   const tenant = getTenantPrisma(params.companyId);
   const where: Prisma.LeaveRequestWhereInput = { employee: { managerId: params.managerEmployeeId } };
   if (params.status) where.status = params.status as Prisma.LeaveRequestWhereInput["status"];
+  // Narrows within the manager's own team - never widens access beyond it.
+  if (params.employeeId) where.employeeId = params.employeeId;
   return paginateRequests(tenant, where, params.page, params.pageSize);
 }
 
@@ -282,10 +285,12 @@ export async function listAllLeaveRequests(params: {
   page: number;
   pageSize: number;
   status?: string;
+  employeeId?: string;
 }) {
   const tenant = getTenantPrisma(params.companyId);
   const where: Prisma.LeaveRequestWhereInput = {};
   if (params.status) where.status = params.status as Prisma.LeaveRequestWhereInput["status"];
+  if (params.employeeId) where.employeeId = params.employeeId;
   return paginateRequests(tenant, where, params.page, params.pageSize);
 }
 

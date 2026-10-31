@@ -65,6 +65,9 @@ export const EmployeeSchema = z.object({
   managerId: z.string().nullable(),
   joiningDate: z.string(),
   status: EmployeeStatusSchema,
+  // The login account linked to this employee, if one exists - lets the UI
+  // call /users/:id/reset-password (keyed by user id, not employee id).
+  userId: z.string().nullable(),
 });
 export type EmployeeDto = z.infer<typeof EmployeeSchema>;
 

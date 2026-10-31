@@ -30,14 +30,24 @@ Notable decisions:
 - Had to stop a leftover `pnpm dev` process (tsx watch on the API) because it held `query_engine-windows.dll.node` locked, blocking `prisma generate` after the migration. Flagged to the developer below - restart `pnpm dev` if you had it running for another reason.
 - `msw` needed a build-script approval entry added to `pnpm-workspace.yaml` (`allowBuilds`/`onlyBuiltDependencies`).
 
-## 1.5b — People & organisation (HR, COMPANY_ADMIN)
-- [ ] Employees list (search/filter/pagination)
-- [ ] Create employee form + one-time temp password dialog
-- [ ] Employee detail (profile, balances, history, edit, deactivate, reset password)
-- [ ] Departments/designations CRUD tables (409-in-use handling)
-- [ ] Users page (COMPANY_ADMIN): list/role/activate/deactivate/reset password, "last admin" error
-- [ ] Tests: temp password dialog shown once
-- [ ] typecheck/lint/test clean, commit
+## 1.5b — People & organisation (HR, COMPANY_ADMIN) — DONE
+- [x] Employees list (search/filter by department+status/pagination) - `EmployeesListPage.tsx`
+- [x] Create employee form + one-time temp password dialog - `CreateEmployeePage.tsx`, `TempPasswordDialog.tsx`
+- [x] Employee detail (profile, balances, history, edit, deactivate, reset password) - `EmployeeDetailPage.tsx`
+- [x] Departments/designations CRUD tables (409-in-use handling) - shared `SimpleNamedEntityPage.tsx`
+- [x] Users page (COMPANY_ADMIN): list/role/activate/deactivate/reset password; HR sees view-only + reset (not on COMPANY_ADMIN targets); "last admin"/`CANNOT_MODIFY_SELF` errors mapped to friendly toasts - `UsersPage.tsx`
+- [x] typecheck/lint/test clean (web + api + shared), committed
+- [x] Tests: `TempPasswordDialog.test.tsx` (shown once, password cleared on close, can't be dismissed by accident via outside-click/Escape)
+- [x] Live smoke test via curl through the Vite proxy (login, list/create department, create employee+login, detail, balances, reset password, deactivate) - see below
+
+Backend additions needed (none of these existed before; added because the UI genuinely can't do this sub-step without them):
+- `Employee.userId` field added to `EmployeeDto`/API responses (join to the linked `User` row) - needed because `POST /users/:id/reset-password` is keyed by **user** id, not employee id, and nothing previously exposed that mapping to the client. Covered by a new test in `employees.test.ts`.
+- Fixed `employee.joiningDate` to serialize as `YYYY-MM-DD` (was a full ISO datetime) for consistency with every other date field in the API, while touching this response shape anyway.
+- `employeeId` optional filter added to `GET /leave-requests` (HR/Admin) and `GET /leave-requests/team` (Manager) - needed for the employee detail page's "leave history" section, and will double as the HR leave-requests page's "employee" filter in 1.5c. Covered by 2 new tests in `leaveRequests.test.ts` (scoping still enforced - a manager filtering by an outsider's id gets zero rows, not the outsider's data).
+- All of the above: shared schema updated, migration **not** needed (no new DB columns, just new response fields/query params) except the earlier `primaryColor` one from 1.5a.
+
+Known gaps / deferred to later sub-steps or follow-up:
+- A deactivated smoke-test employee ("Smoke Test", `EMP-001`) is left in the ACME dev company from manual testing - employees have no delete endpoint (deactivation is terminal by design), so per the new "don't touch the dev DB" rule I left it rather than reaching into Postgres directly. Harmless (inactive, excluded from active lists by default filter) but flagging it.
 
 ## 1.5c — Leave
 - [ ] HR leave requests page (tabs, filters, proof overdue filter)

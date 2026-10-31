@@ -1,10 +1,12 @@
 import { Router } from "express";
+import type { Employee } from "@prisma/client";
 import {
   CreateEmployeeRequestSchema,
   EmployeeListQuerySchema,
   UpdateEmployeeRequestSchema,
   UpdateEmployeeStatusRequestSchema,
   UpdateOwnProfileRequestSchema,
+  type EmployeeDto,
 } from "@employee-saas/shared";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { toUserDto } from "../../lib/dto.js";
@@ -25,6 +27,29 @@ import {
 
 export const employeesRouter = Router();
 
+function toEmployeeDto(employee: Employee, userId: string | null): EmployeeDto {
+  return {
+    id: employee.id,
+    companyId: employee.companyId,
+    employeeCode: employee.employeeCode,
+    firstName: employee.firstName,
+    lastName: employee.lastName,
+    phone: employee.phone,
+    photoUrl: employee.photoUrl,
+    departmentId: employee.departmentId,
+    designationId: employee.designationId,
+    managerId: employee.managerId,
+    joiningDate: employee.joiningDate.toISOString().slice(0, 10),
+    status: employee.status,
+    userId,
+  };
+}
+
+type EmployeeWithUser = Employee & { user: { id: string } | null };
+function toEmployeeDtoWithUser(employee: EmployeeWithUser): EmployeeDto {
+  return toEmployeeDto(employee, employee.user?.id ?? null);
+}
+
 employeesRouter.use("/employees", requireAuth, requireCompanyContext);
 
 employeesRouter.get(
@@ -38,7 +63,7 @@ employeesRouter.get(
       requesterEmployeeId: req.auth!.employeeId,
       ...query,
     });
-    res.status(200).json({ data, page: query.page, pageSize: query.pageSize, total });
+    res.status(200).json({ data: data.map(toEmployeeDtoWithUser), page: query.page, pageSize: query.pageSize, total });
   }),
 );
 
@@ -53,7 +78,7 @@ employeesRouter.post(
       ...req.body,
     });
     res.status(201).json({
-      employee,
+      employee: toEmployeeDto(employee, user?.id ?? null),
       login: user && temporaryPassword ? { user: toUserDto(user), temporaryPassword } : null,
     });
   }),
@@ -67,7 +92,7 @@ employeesRouter.get(
       throw new ApiError(404, "NOT_FOUND", "You do not have an employee profile.");
     }
     const employee = await getOwnProfile({ companyId: req.auth!.companyId!, employeeId: req.auth!.employeeId });
-    res.status(200).json({ employee });
+    res.status(200).json({ employee: toEmployeeDtoWithUser(employee) });
   }),
 );
 
@@ -84,7 +109,7 @@ employeesRouter.patch(
       employeeId: req.auth!.employeeId,
       phone: req.body.phone,
     });
-    res.status(200).json({ employee });
+    res.status(200).json({ employee: toEmployeeDtoWithUser(employee) });
   }),
 );
 
@@ -97,7 +122,7 @@ employeesRouter.get(
       requesterRole: req.auth!.role,
       requesterEmployeeId: req.auth!.employeeId,
     });
-    res.status(200).json({ employee });
+    res.status(200).json({ employee: toEmployeeDtoWithUser(employee) });
   }),
 );
 
@@ -112,7 +137,7 @@ employeesRouter.patch(
       employeeId: req.params.id!,
       data: req.body,
     });
-    res.status(200).json({ employee });
+    res.status(200).json({ employee: toEmployeeDtoWithUser(employee) });
   }),
 );
 
@@ -127,6 +152,6 @@ employeesRouter.patch(
       employeeId: req.params.id!,
       status: req.body.status,
     });
-    res.status(200).json({ employee });
+    res.status(200).json({ employee: toEmployeeDtoWithUser(employee) });
   }),
 );

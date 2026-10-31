@@ -11,4 +11,24 @@ export const NAV_ITEMS: NavItem[] = [
     label: strings.nav.dashboard,
     roles: ["SUPER_ADMIN", "COMPANY_ADMIN", "HR", "MANAGER", "EMPLOYEE"],
   },
+  {
+    to: "/employees",
+    label: strings.nav.employees,
+    roles: ["COMPANY_ADMIN", "HR", "MANAGER"],
+  },
+  {
+    to: "/users",
+    label: strings.nav.users,
+    roles: ["COMPANY_ADMIN", "HR"],
+  },
+  {
+    to: "/departments",
+    label: strings.nav.departments,
+    roles: ["COMPANY_ADMIN", "HR"],
+  },
+  {
+    to: "/designations",
+    label: strings.nav.designations,
+    roles: ["COMPANY_ADMIN", "HR"],
+  },
 ];

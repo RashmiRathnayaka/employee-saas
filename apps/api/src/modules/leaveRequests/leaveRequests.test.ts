@@ -217,3 +217,68 @@ describe("GET /api/v1/leave-requests/:id", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("employeeId filter on /leave-requests and /leave-requests/team", () => {
+  it("HR's company-wide list, filtered to one employee, returns only that employee's requests", async () => {
+    const app = createApp();
+    const { token: adminToken, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+    const { token: hrToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "HR",
+      email: "hr@example.test",
+      role: "HR",
+    });
+    const { employee: employeeA, token: tokenA } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "A",
+      email: "a@example.test",
+    });
+    const { token: tokenB } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "B",
+      email: "b@example.test",
+    });
+    const leaveTypeId = await getAnnualLeaveTypeId(app, adminToken);
+
+    await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", tokenA)
+      .send({ leaveTypeId, startDate: "2026-03-02", endDate: "2026-03-02" });
+    await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", tokenB)
+      .send({ leaveTypeId, startDate: "2026-03-03", endDate: "2026-03-03" });
+
+    const res = await request(app)
+      .get(`/api/v1/leave-requests?employeeId=${employeeA.id}`)
+      .set("Authorization", hrToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].employeeId).toBe(employeeA.id);
+  });
+
+  it("a manager filtering their team list by employeeId cannot see an employee outside their team", async () => {
+    const app = createApp();
+    const { token: adminToken, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+    const { token: managerToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Manager",
+      email: "manager@example.test",
+      role: "MANAGER",
+    });
+    const { employee: outsider, token: outsiderToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Outsider",
+      email: "outsider@example.test",
+    });
+    const leaveTypeId = await getAnnualLeaveTypeId(app, adminToken);
+
+    await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", outsiderToken)
+      .send({ leaveTypeId, startDate: "2026-03-02", endDate: "2026-03-02" });
+
+    const res = await request(app)
+      .get(`/api/v1/leave-requests/team?employeeId=${outsider.id}`)
+      .set("Authorization", managerToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(0);
+  });
+});
