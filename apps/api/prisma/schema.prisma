@@ -9,11 +9,12 @@ datasource db {
 }
 
 model Company {
-  id        String        @id @default(uuid())
-  name      String
-  code      String        @unique
-  logoUrl   String?
-  status    CompanyStatus @default(ACTIVE)
+  id           String        @id @default(uuid())
+  name         String
+  code         String        @unique
+  logoUrl      String?
+  primaryColor String?
+  status       CompanyStatus @default(ACTIVE)
   timezone  String        @default("Asia/Colombo")
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt

@@ -27,6 +27,7 @@ export const CompanySchema = z.object({
   status: CompanyStatusSchema,
   timezone: z.string(),
   logoUrl: z.string().nullable(),
+  primaryColor: z.string().nullable(),
   createdAt: z.string(),
 });
 export type CompanyDto = z.infer<typeof CompanySchema>;
@@ -34,6 +35,12 @@ export type CompanyDto = z.infer<typeof CompanySchema>;
 export const UpdateCompanyProfileRequestSchema = z.object({
   name: z.string().trim().min(1).optional(),
   logoUrl: z.string().url().nullable().optional(),
+  primaryColor: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/, "primaryColor must be a hex colour like #4F46E5")
+    .nullable()
+    .optional(),
 });
 export type UpdateCompanyProfileRequest = z.infer<typeof UpdateCompanyProfileRequestSchema>;
 

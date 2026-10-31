@@ -14,7 +14,7 @@ export async function getOwnCompany(companyId: string) {
 export async function updateOwnCompany(params: {
   companyId: string;
   actorUserId: string;
-  data: { name?: string; logoUrl?: string | null };
+  data: { name?: string; logoUrl?: string | null; primaryColor?: string | null };
 }) {
   return platformPrisma.$transaction(async (tx) => {
     const updated = await tx.company.update({ where: { id: params.companyId }, data: params.data });

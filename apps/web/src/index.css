@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+:root {
+  --color-primary: #4f46e5;
+  --color-primary-foreground: #ffffff;
+}
+
+@theme inline {
+  --color-primary: var(--color-primary);
+  --color-primary-foreground: var(--color-primary-foreground);
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}

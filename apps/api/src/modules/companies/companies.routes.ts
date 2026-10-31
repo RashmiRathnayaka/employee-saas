@@ -17,6 +17,7 @@ function toCompanyDto(company: Company): CompanyDto {
     status: company.status,
     timezone: company.timezone,
     logoUrl: company.logoUrl,
+    primaryColor: company.primaryColor,
     createdAt: company.createdAt.toISOString(),
   };
 }
