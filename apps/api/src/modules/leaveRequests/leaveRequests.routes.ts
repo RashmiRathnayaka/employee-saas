@@ -1,10 +1,12 @@
 import { Router } from "express";
-import type { LeaveRequest } from "@prisma/client";
+import type { LeaveApproval, LeaveRequest } from "@prisma/client";
 import {
   CreateLeaveRequestSchema,
   DecideLeaveRequestSchema,
   LeaveRequestListQuerySchema,
+  PreviewLeaveDaysRequestSchema,
   RevokeLeaveRequestSchema,
+  type LeaveApprovalDto,
   type LeaveRequestDto,
 } from "@employee-saas/shared";
 import { asyncHandler } from "../../lib/asyncHandler.js";
@@ -14,10 +16,12 @@ import { requireCompanyContext } from "../../middleware/requireCompanyContext.js
 import { requireRole } from "../../middleware/requireRole.js";
 import { validateBody } from "../../middleware/validate.js";
 import {
+  getApprovalHistory,
   getLeaveRequestById,
   listAllLeaveRequests,
   listOwnLeaveRequests,
   listTeamLeaveRequests,
+  previewLeaveDays,
   submitLeaveRequest,
 } from "./leaveRequests.service.js";
 import { cancelLeaveRequest, decideLeaveRequest, revokeLeaveRequest } from "./leaveDecisions.service.js";
@@ -61,6 +65,15 @@ leaveRequestsRouter.post(
       ...req.body,
     });
     res.status(201).json({ leaveRequest: toLeaveRequestDto(leaveRequest) });
+  }),
+);
+
+leaveRequestsRouter.post(
+  "/leave-requests/preview",
+  validateBody(PreviewLeaveDaysRequestSchema),
+  asyncHandler(async (req, res) => {
+    const totalDays = await previewLeaveDays({ companyId: req.auth!.companyId!, ...req.body });
+    res.status(200).json({ totalDays });
   }),
 );
 
@@ -108,6 +121,18 @@ leaveRequestsRouter.get(
   }),
 );
 
+type ApprovalWithApprover = LeaveApproval & { approver: { id: string; email: string | null; role: LeaveApprovalDto["approver"]["role"] } };
+function toLeaveApprovalDto(approval: ApprovalWithApprover): LeaveApprovalDto {
+  return {
+    id: approval.id,
+    step: approval.step,
+    decision: approval.decision,
+    note: approval.note,
+    decidedAt: approval.decidedAt.toISOString(),
+    approver: { id: approval.approver.id, email: approval.approver.email, role: approval.approver.role },
+  };
+}
+
 leaveRequestsRouter.get(
   "/leave-requests/:id",
   asyncHandler(async (req, res) => {
@@ -117,7 +142,11 @@ leaveRequestsRouter.get(
       requesterRole: req.auth!.role,
       requesterEmployeeId: req.auth!.employeeId,
     });
-    res.status(200).json({ leaveRequest: toLeaveRequestDto(leaveRequest) });
+    const approvals = await getApprovalHistory({ companyId: req.auth!.companyId!, leaveRequestId: req.params.id! });
+    res.status(200).json({
+      leaveRequest: toLeaveRequestDto(leaveRequest),
+      approvals: approvals.map(toLeaveApprovalDto),
+    });
   }),
 );
 

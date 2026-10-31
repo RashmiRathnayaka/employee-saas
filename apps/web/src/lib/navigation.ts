@@ -31,4 +31,29 @@ export const NAV_ITEMS: NavItem[] = [
     label: strings.nav.designations,
     roles: ["COMPANY_ADMIN", "HR"],
   },
+  {
+    to: "/leave-requests",
+    label: strings.nav.leaveRequests,
+    roles: ["COMPANY_ADMIN", "HR"],
+  },
+  {
+    to: "/leave-requests/team",
+    label: strings.nav.leaveRequests,
+    roles: ["MANAGER"],
+  },
+  {
+    to: "/my-leave",
+    label: strings.nav.myLeave,
+    roles: ["COMPANY_ADMIN", "HR", "MANAGER", "EMPLOYEE"],
+  },
+  {
+    to: "/leave-types",
+    label: strings.nav.leaveTypes,
+    roles: ["COMPANY_ADMIN", "HR"],
+  },
+  {
+    to: "/holidays",
+    label: strings.nav.holidays,
+    roles: ["COMPANY_ADMIN", "HR"],
+  },
 ];

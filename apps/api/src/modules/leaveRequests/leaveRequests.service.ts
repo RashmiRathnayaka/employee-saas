@@ -106,6 +106,43 @@ async function notifyApprovers(
   );
 }
 
+/** Computes totalDays for a candidate date range without creating anything
+ * or touching balances - backs the "show total days before submitting" UI.
+ * Deliberately doesn't duplicate submit-time checks like past-dates or
+ * overlap (those depend on the chosen leave type and existing requests);
+ * this is just the day-count arithmetic. */
+export async function previewLeaveDays(params: {
+  companyId: string;
+  startDate: string;
+  endDate: string;
+  startHalfDay: boolean;
+  endHalfDay: boolean;
+}): Promise<number> {
+  const tenant = getTenantPrisma(params.companyId);
+  const settings = await tenant.companySettings.findUnique({ where: { companyId: params.companyId } });
+  if (!settings) throw new ApiError(500, "INTERNAL_ERROR", "Company configuration not found.");
+
+  const startDate = toUtcDate(params.startDate);
+  const endDate = toUtcDate(params.endDate);
+  if (startDate.getUTCFullYear() !== endDate.getUTCFullYear()) {
+    throw new ApiError(400, "INVALID_LEAVE_RANGE", "A leave request must stay within a single calendar year.");
+  }
+
+  const holidayRows = await tenant.companyHoliday.findMany({
+    where: { companyId: params.companyId, date: { gte: startDate, lte: endDate } },
+  });
+  const holidays = new Set(holidayRows.map((h) => dateKey(h.date)));
+
+  return calculateLeaveDays({
+    startDate,
+    endDate,
+    startHalfDay: params.startHalfDay,
+    endHalfDay: params.endHalfDay,
+    workingDays: normalizeWorkingDays(settings.workingDays),
+    holidays,
+  });
+}
+
 export async function submitLeaveRequest(params: {
   companyId: string;
   employeeId: string;
@@ -264,33 +301,41 @@ export async function listOwnLeaveRequests(params: {
   return paginateRequests(tenant, where, params.page, params.pageSize);
 }
 
-export async function listTeamLeaveRequests(params: {
-  companyId: string;
-  managerEmployeeId: string;
-  page: number;
-  pageSize: number;
+type LeaveRequestListFilters = {
   status?: string;
   employeeId?: string;
-}) {
-  const tenant = getTenantPrisma(params.companyId);
-  const where: Prisma.LeaveRequestWhereInput = { employee: { managerId: params.managerEmployeeId } };
+  leaveTypeId?: string;
+  fromDate?: string;
+  toDate?: string;
+  proofOverdue?: boolean;
+};
+
+function applyListFilters(where: Prisma.LeaveRequestWhereInput, params: LeaveRequestListFilters) {
   if (params.status) where.status = params.status as Prisma.LeaveRequestWhereInput["status"];
-  // Narrows within the manager's own team - never widens access beyond it.
   if (params.employeeId) where.employeeId = params.employeeId;
+  if (params.leaveTypeId) where.leaveTypeId = params.leaveTypeId;
+  if (params.fromDate) where.endDate = { gte: toUtcDate(params.fromDate) };
+  if (params.toDate) where.startDate = { lte: toUtcDate(params.toDate) };
+  if (params.proofOverdue) where.proofStatus = { in: ["MISSING", "INFO_REQUIRED"] };
+}
+
+export async function listTeamLeaveRequests(
+  params: { companyId: string; managerEmployeeId: string; page: number; pageSize: number } & LeaveRequestListFilters,
+) {
+  const tenant = getTenantPrisma(params.companyId);
+  // Narrowed within the manager's own team - the extra filters below only
+  // ever restrict further, never widen access beyond direct reports.
+  const where: Prisma.LeaveRequestWhereInput = { employee: { managerId: params.managerEmployeeId } };
+  applyListFilters(where, params);
   return paginateRequests(tenant, where, params.page, params.pageSize);
 }
 
-export async function listAllLeaveRequests(params: {
-  companyId: string;
-  page: number;
-  pageSize: number;
-  status?: string;
-  employeeId?: string;
-}) {
+export async function listAllLeaveRequests(
+  params: { companyId: string; page: number; pageSize: number } & LeaveRequestListFilters,
+) {
   const tenant = getTenantPrisma(params.companyId);
   const where: Prisma.LeaveRequestWhereInput = {};
-  if (params.status) where.status = params.status as Prisma.LeaveRequestWhereInput["status"];
-  if (params.employeeId) where.employeeId = params.employeeId;
+  applyListFilters(where, params);
   return paginateRequests(tenant, where, params.page, params.pageSize);
 }
 
@@ -333,6 +378,15 @@ export async function getLeaveRequestById(params: {
   }
 
   return leaveRequest;
+}
+
+export async function getApprovalHistory(params: { companyId: string; leaveRequestId: string }) {
+  const tenant = getTenantPrisma(params.companyId);
+  return tenant.leaveApproval.findMany({
+    where: { leaveRequestId: params.leaveRequestId },
+    orderBy: { decidedAt: "asc" },
+    include: { approver: { select: { id: true, email: true, role: true } } },
+  });
 }
 
 export { lockOrCreateBalance, toUtcDate };

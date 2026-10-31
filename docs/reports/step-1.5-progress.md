@@ -49,16 +49,26 @@ Backend additions needed (none of these existed before; added because the UI gen
 Known gaps / deferred to later sub-steps or follow-up:
 - A deactivated smoke-test employee ("Smoke Test", `EMP-001`) is left in the ACME dev company from manual testing - employees have no delete endpoint (deactivation is terminal by design), so per the new "don't touch the dev DB" rule I left it rather than reaching into Postgres directly. Harmless (inactive, excluded from active lists by default filter) but flagging it.
 
-## 1.5c — Leave
-- [ ] HR leave requests page (tabs, filters, proof overdue filter)
-- [ ] Request detail (dates, balance before/after, approval history, documents, approve/reject/revoke)
-- [ ] Manager: my team + team leave requests w/ approve/reject
-- [ ] My leave: balances, apply (+ days-preview endpoint if missing, with tests), history, cancel, upload doc
-- [ ] Leave types CRUD
-- [ ] Balance adjustment dialog
-- [ ] Holidays list/add/delete
-- [ ] Tests: approve/reject hidden on own request / manager-at-HR-step, leave apply validation
-- [ ] typecheck/lint/test clean, commit
+## 1.5c — Leave — DONE
+- [x] HR leave requests page (tabs Pending/Approved/Rejected/All, employee/leave-type filters, proof-overdue filter) - `HrLeaveRequestsPage.tsx`
+- [x] Request detail page (dates, half-day, balance snapshot + "moves to used on approval" note, approval history, documents w/ HR review actions, approve/reject/revoke/cancel) - `LeaveRequestDetailPage.tsx`
+- [x] Manager: "My team" reuses the already-role-scoped `/employees` list (the API already returns only direct reports for MANAGER - no separate page needed); team leave requests w/ approve/reject at MANAGER step - `TeamLeaveRequestsPage.tsx`
+- [x] My leave: balances, apply form with live totalDays preview, history, cancel (on detail page), upload doc (on detail page) - `MyLeavePage.tsx`
+- [x] Leave types CRUD (bespoke, not the shared departments/designations component - extra fields) - `LeaveTypesPage.tsx`
+- [x] Balance adjustment dialog, wired onto the employee detail page's balances table - `AdjustBalanceDialog.tsx`
+- [x] Holidays list/add/delete - `HolidaysPage.tsx`
+- [x] Tests: `leaveDecisionRules.test.ts` (own-request / manager-at-HR-step / HR-fallback-at-MANAGER-step all covered as pure-function unit tests mirroring the API's rule), `MyLeavePage.test.tsx` (apply form validation + live preview)
+- [x] typecheck/lint/test clean (web + api + shared), production build succeeds, committed
+
+Backend additions needed (same rationale as 1.5b - UI genuinely blocked without them):
+- `POST /leave-requests/preview` - computes `totalDays` for a candidate range without creating anything; backs "show total days before submitting". Tests added.
+- `GET /leave-requests/:id` response now also returns `approvals: LeaveApprovalDto[]` (the `leave_approvals` history) - nothing exposed this before. New shared `LeaveApprovalDto`. Test added (two-step MANAGER_THEN_HR history, in order, with approver identity).
+- `GET /leave-requests` and `/leave-requests/team` gained `leaveTypeId`, `fromDate`, `toDate`, `proofOverdue` filters (on top of 1.5b's `employeeId`) - needed for the HR page's required filter set. `proofOverdue` = proofStatus is MISSING or INFO_REQUIRED. Tests added.
+- `docs/api-phase1.md` updated for the new/changed endpoints.
+
+Known simplifications (Phase 1 scale, not a correctness problem, just not "real" pagination):
+- The "Pending" tab merges two separate paginated calls (status=PENDING_MANAGER + status=PENDING_HR) client-side since the API's status filter is single-valued; pagination controls are hidden for that tab specifically (fetches up to 100+100 and shows all, sorted by createdAt desc). Approved/Rejected/All tabs paginate normally server-side.
+- HR's leave-requests page employee/leave-type filter dropdowns fetch up to 100 rows (same `pageSize=100, no search` approach as the manager-picker dropdown from 1.5b) - revisit if a company exceeds 100 employees/leave types.
 
 ## 1.5d — Settings, dashboards, Super Admin
 - [ ] Company settings page

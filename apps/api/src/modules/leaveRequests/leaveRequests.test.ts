@@ -195,6 +195,45 @@ describe("POST /api/v1/leave-requests", () => {
   });
 });
 
+describe("POST /api/v1/leave-requests/preview", () => {
+  it("computes totalDays for a range, respecting working days and holidays, without creating a request", async () => {
+    const app = createApp();
+    const { token: adminToken, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+    const { token: employeeToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Solo",
+      email: "solo@example.test",
+    });
+
+    const res = await request(app)
+      .post("/api/v1/leave-requests/preview")
+      .set("Authorization", employeeToken)
+      .send({ startDate: "2026-03-02", endDate: "2026-03-06" }); // Mon-Fri
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalDays).toBe(5);
+
+    const listRes = await request(app).get("/api/v1/leave-requests/me").set("Authorization", employeeToken);
+    expect(listRes.body.total).toBe(0);
+  });
+
+  it("rejects a range crossing a calendar year boundary, same as submit", async () => {
+    const app = createApp();
+    const { token: adminToken, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+    const { token: employeeToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Solo",
+      email: "solo@example.test",
+    });
+
+    const res = await request(app)
+      .post("/api/v1/leave-requests/preview")
+      .set("Authorization", employeeToken)
+      .send({ startDate: "2025-12-29", endDate: "2026-01-03" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_LEAVE_RANGE");
+  });
+});
+
 describe("GET /api/v1/leave-requests/:id", () => {
   it("cross-tenant: company B gets 404 for company A's leave request", async () => {
     const app = createApp();
@@ -280,5 +319,39 @@ describe("employeeId filter on /leave-requests and /leave-requests/team", () => 
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(0);
+  });
+
+  it("proofOverdue filters to requests needing proof action (MISSING/INFO_REQUIRED), leaveTypeId filters by type", async () => {
+    const app = createApp();
+    const { token: adminToken, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+    const { token: hrToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "HR",
+      email: "hr2@example.test",
+      role: "HR",
+    });
+    const { token: employeeToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Solo",
+      email: "solo2@example.test",
+    });
+    const annualTypeId = await getAnnualLeaveTypeId(app, adminToken);
+    const sickTypeId = await getLeaveTypeIdByCode(app, adminToken, "SICK");
+
+    await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", employeeToken)
+      .send({ leaveTypeId: annualTypeId, startDate: "2026-03-02", endDate: "2026-03-02" });
+    await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", employeeToken)
+      .send({ leaveTypeId: sickTypeId, startDate: "2026-03-03", endDate: "2026-03-03" });
+
+    const byType = await request(app).get(`/api/v1/leave-requests?leaveTypeId=${sickTypeId}`).set("Authorization", hrToken);
+    expect(byType.body.data).toHaveLength(1);
+    expect(byType.body.data[0].leaveTypeId).toBe(sickTypeId);
+
+    const overdue = await request(app).get("/api/v1/leave-requests?proofOverdue=true").set("Authorization", hrToken);
+    expect(overdue.body.data).toHaveLength(1);
+    expect(overdue.body.data[0].leaveTypeId).toBe(sickTypeId);
+    expect(overdue.body.data[0].proofStatus).toBe("MISSING");
   });
 });

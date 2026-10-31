@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RoleSchema } from "./roles.js";
 
 const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
 
@@ -11,6 +12,17 @@ export const CreateLeaveRequestSchema = z.object({
   reason: z.string().trim().max(1000).optional(),
 });
 export type CreateLeaveRequest = z.infer<typeof CreateLeaveRequestSchema>;
+
+export const PreviewLeaveDaysRequestSchema = z.object({
+  startDate: isoDate,
+  endDate: isoDate,
+  startHalfDay: z.boolean().default(false),
+  endHalfDay: z.boolean().default(false),
+});
+export type PreviewLeaveDaysRequest = z.infer<typeof PreviewLeaveDaysRequestSchema>;
+
+export const PreviewLeaveDaysResponseSchema = z.object({ totalDays: z.number() });
+export type PreviewLeaveDaysResponse = z.infer<typeof PreviewLeaveDaysResponseSchema>;
 
 export const DecideLeaveRequestSchema = z.object({
   note: z.string().trim().max(1000).optional(),
@@ -38,6 +50,17 @@ export const LeaveRequestListQuerySchema = z.object({
   // Only honoured on /leave-requests (COMPANY_ADMIN, HR) and /leave-requests/team
   // (MANAGER, further narrowed to their own direct reports either way).
   employeeId: z.string().optional(),
+  leaveTypeId: z.string().optional(),
+  fromDate: isoDate.optional(),
+  toDate: isoDate.optional(),
+  // "Needs attention" shorthand: proofStatus is MISSING or INFO_REQUIRED.
+  // A plain `z.coerce.boolean()` would treat the string "false" as truthy
+  // (Boolean("false") === true), so this matches the literal "true" string
+  // a query param actually carries instead.
+  proofOverdue: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => v === "true"),
 });
 export type LeaveRequestListQuery = z.infer<typeof LeaveRequestListQuerySchema>;
 
@@ -60,3 +83,13 @@ export const LeaveRequestSchema = z.object({
   createdAt: z.string(),
 });
 export type LeaveRequestDto = z.infer<typeof LeaveRequestSchema>;
+
+export const LeaveApprovalSchema = z.object({
+  id: z.string(),
+  step: z.enum(["MANAGER", "HR"]),
+  decision: z.enum(["APPROVED", "REJECTED"]),
+  note: z.string().nullable(),
+  decidedAt: z.string(),
+  approver: z.object({ id: z.string(), email: z.string().nullable(), role: RoleSchema }),
+});
+export type LeaveApprovalDto = z.infer<typeof LeaveApprovalSchema>;

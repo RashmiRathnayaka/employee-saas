@@ -16,6 +16,49 @@ async function getBalance(app: ReturnType<typeof createApp>, adminToken: string,
   return res.body.data.find((b: { leaveTypeId: string }) => b.leaveTypeId === leaveTypeId);
 }
 
+describe("GET /api/v1/leave-requests/:id approval history", () => {
+  it("includes one approvals row per decided step, in order, with the approver's identity", async () => {
+    const app = createApp();
+    const { token: adminToken, company } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+    await request(app)
+      .patch("/api/v1/company/settings")
+      .set("Authorization", adminToken)
+      .send({ leaveApprovalWorkflow: "MANAGER_THEN_HR" });
+    const { employee: manager, token: managerToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Manager",
+      email: "manager2@example.test",
+      role: "MANAGER",
+    });
+    const { token: hrToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "HR",
+      email: "hr3@example.test",
+      role: "HR",
+    });
+    const { token: employeeToken } = await createEmployeeWithLogin(app, adminToken, company.code, {
+      firstName: "Employee",
+      email: "employee2@example.test",
+      managerId: manager.id,
+    });
+    const leaveTypeId = await getLeaveTypeIdByCode(app, adminToken, "ANNUAL");
+
+    const createRes = await request(app)
+      .post("/api/v1/leave-requests")
+      .set("Authorization", employeeToken)
+      .send({ leaveTypeId, startDate: "2026-03-02", endDate: "2026-03-02" });
+    const requestId = createRes.body.leaveRequest.id;
+
+    await request(app).patch(`/api/v1/leave-requests/${requestId}/approve`).set("Authorization", managerToken).send({ note: "looks fine" });
+    await request(app).patch(`/api/v1/leave-requests/${requestId}/approve`).set("Authorization", hrToken).send({});
+
+    const res = await request(app).get(`/api/v1/leave-requests/${requestId}`).set("Authorization", adminToken);
+    expect(res.body.approvals).toHaveLength(2);
+    expect(res.body.approvals[0]).toMatchObject({ step: "MANAGER", decision: "APPROVED", note: "looks fine" });
+    expect(res.body.approvals[1]).toMatchObject({ step: "HR", decision: "APPROVED", note: null });
+    expect(res.body.approvals[0].approver.role).toBe("MANAGER");
+    expect(res.body.approvals[1].approver.role).toBe("HR");
+  });
+});
+
 describe("MANAGER_ONLY workflow (default)", () => {
   it("manager approval is final: pending -> used", async () => {
     const app = createApp();

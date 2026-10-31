@@ -16,6 +16,12 @@ import { EmployeeDetailPage } from "./routes/EmployeeDetailPage";
 import { DepartmentsPage } from "./routes/DepartmentsPage";
 import { DesignationsPage } from "./routes/DesignationsPage";
 import { UsersPage } from "./routes/UsersPage";
+import { LeaveTypesPage } from "./routes/LeaveTypesPage";
+import { HolidaysPage } from "./routes/HolidaysPage";
+import { HrLeaveRequestsPage } from "./routes/HrLeaveRequestsPage";
+import { TeamLeaveRequestsPage } from "./routes/TeamLeaveRequestsPage";
+import { MyLeavePage } from "./routes/MyLeavePage";
+import { LeaveRequestDetailPage } from "./routes/LeaveRequestDetailPage";
 import { NotAllowedPage } from "./routes/NotAllowedPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
 
@@ -43,6 +49,16 @@ export function App() {
                       <Route path="/departments" element={<DepartmentsPage />} />
                       <Route path="/designations" element={<DesignationsPage />} />
                       <Route path="/users" element={<UsersPage />} />
+                      <Route path="/leave-requests" element={<HrLeaveRequestsPage />} />
+                      <Route path="/leave-types" element={<LeaveTypesPage />} />
+                      <Route path="/holidays" element={<HolidaysPage />} />
+                    </Route>
+                    <Route element={<RequireRole roles={["MANAGER"]} />}>
+                      <Route path="/leave-requests/team" element={<TeamLeaveRequestsPage />} />
+                    </Route>
+                    <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR", "MANAGER", "EMPLOYEE"]} />}>
+                      <Route path="/my-leave" element={<MyLeavePage />} />
+                      <Route path="/leave-requests/:id" element={<LeaveRequestDetailPage />} />
                     </Route>
                   </Route>
                 </Route>

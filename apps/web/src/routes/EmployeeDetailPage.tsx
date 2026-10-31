@@ -23,6 +23,7 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusBadge } from "../components/StatusBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TempPasswordDialog } from "../components/TempPasswordDialog";
+import { AdjustBalanceDialog } from "../components/AdjustBalanceDialog";
 import { api } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
 import { useCompany } from "../lib/companyContext";
@@ -44,6 +45,7 @@ export function EmployeeDetailPage() {
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
+  const [adjustingBalance, setAdjustingBalance] = useState<LeaveBalanceDto | null>(null);
 
   const canManage = user?.role === "COMPANY_ADMIN" || user?.role === "HR";
   const isSelf = user?.employeeId === employeeId;
@@ -196,6 +198,7 @@ export function EmployeeDetailPage() {
                   <th className="py-2">{strings.employees.available}</th>
                   <th className="py-2">{strings.employees.used}</th>
                   <th className="py-2">{strings.employees.pending}</th>
+                  {canManage ? <th className="py-2" /> : null}
                 </tr>
               </thead>
               <tbody>
@@ -207,6 +210,13 @@ export function EmployeeDetailPage() {
                     <td className="py-2.5">{balance.availableDays}</td>
                     <td className="py-2.5">{balance.usedDays}</td>
                     <td className="py-2.5">{balance.pendingDays}</td>
+                    {canManage ? (
+                      <td className="py-2.5 text-right">
+                        <Button variant="secondary" size="sm" onClick={() => setAdjustingBalance(balance)}>
+                          {strings.employees.adjustBalance}
+                        </Button>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -274,6 +284,16 @@ export function EmployeeDetailPage() {
       />
 
       <TempPasswordDialog open={!!temporaryPassword} onOpenChange={() => setTemporaryPassword(null)} password={temporaryPassword} />
+
+      {adjustingBalance ? (
+        <AdjustBalanceDialog
+          open
+          onOpenChange={(open) => !open && setAdjustingBalance(null)}
+          employeeId={employee.id}
+          balance={adjustingBalance}
+          leaveType={leaveTypesQuery.data?.data.find((lt) => lt.id === adjustingBalance.leaveTypeId)}
+        />
+      ) : null}
     </div>
   );
 }

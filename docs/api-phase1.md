@@ -122,9 +122,10 @@ discover it immediately after logging in).
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | POST | `/leave-requests` | any employee | Submit a leave request for self |
+| POST | `/leave-requests/preview` | any | Compute `totalDays` for a candidate date range, without creating anything - backs the "show total days before submitting" UI |
 | GET | `/leave-requests/me` | any employee | List own leave requests |
-| GET | `/leave-requests/team` | MANAGER | List requests from direct reports |
-| GET | `/leave-requests` | COMPANY_ADMIN, HR | List all requests in own company |
+| GET | `/leave-requests/team` | MANAGER | List requests from direct reports (optional `employeeId` filter, narrowed to the manager's own team) |
+| GET | `/leave-requests` | COMPANY_ADMIN, HR | List all requests in own company (optional `employeeId` filter) |
 | GET | `/leave-requests/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | View one request |
 | PATCH | `/leave-requests/:id/cancel` | request owner | Cancel own pending request (decrements `pendingDays`) |
 | PATCH | `/leave-requests/:id/approve` | MANAGER (own team, MANAGER step), HR (HR step, or MANAGER step as fallback) | Approve the current step (idempotent — errors if that step is already decided, or if the caller is the requester) |
