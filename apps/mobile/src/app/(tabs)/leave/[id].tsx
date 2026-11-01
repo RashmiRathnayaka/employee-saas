@@ -5,6 +5,7 @@ import { Screen } from "../../../components/ui/Screen";
 import { Card } from "../../../components/ui/Card";
 import { Button } from "../../../components/ui/Button";
 import { ErrorView, LoadingView } from "../../../components/ui/StateViews";
+import { UploadProofSection } from "../../../components/UploadProofSection";
 import { useLeaveRequestDetail, useLeaveTypes } from "../../../lib/queries";
 import { leaveStatusLabel } from "../../../lib/leaveStatusLabel";
 import { api } from "../../../lib/apiClient";
@@ -114,6 +115,12 @@ export default function LeaveDetailScreen() {
           ))
         )}
       </Card>
+
+      {leaveRequest.proofStatus !== "NOT_REQUIRED" ? (
+        <Card>
+          <UploadProofSection requestId={id!} proofStatus={leaveRequest.proofStatus} />
+        </Card>
+      ) : null}
     </Screen>
   );
 }
