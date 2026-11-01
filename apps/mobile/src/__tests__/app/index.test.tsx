@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { render, screen } from "@testing-library/react-native";
-import Index from "./index";
+import Index from "../../app/index";
 
 jest.mock("expo-router", () => {
   // jest.mock factories run before the file's own imports (Jest hoists
@@ -18,7 +18,7 @@ jest.mock("expo-router", () => {
 // Jest's hoisting guard only allows out-of-scope variables whose name
 // starts with "mock" (case-insensitive) inside a jest.mock() factory.
 const mockUseAuth = jest.fn();
-jest.mock("../lib/authContext", () => ({
+jest.mock("../../lib/authContext", () => ({
   useAuth: () => mockUseAuth(),
 }));
 

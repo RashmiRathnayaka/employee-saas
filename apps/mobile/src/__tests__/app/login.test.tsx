@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { render, screen, fireEvent } from "@testing-library/react-native";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClient } from "../lib/queryClient";
-import { AuthProvider } from "../lib/authContext";
-import { strings } from "../strings";
-import LoginScreen from "./login";
+import { queryClient } from "../../lib/queryClient";
+import { AuthProvider } from "../../lib/authContext";
+import { strings } from "../../strings";
+import LoginScreen from "../../app/login";
 
 jest.mock("expo-router", () => {
   // jest.mock factories run before the file's own imports (Jest hoists

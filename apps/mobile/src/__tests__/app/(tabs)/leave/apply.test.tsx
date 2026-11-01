@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { render, screen, fireEvent } from "@testing-library/react-native";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClient } from "../../../lib/queryClient";
-import { AuthProvider } from "../../../lib/authContext";
-import { strings } from "../../../strings";
-import ApplyLeaveScreen from "./apply";
+import { queryClient } from "../../../../lib/queryClient";
+import { AuthProvider } from "../../../../lib/authContext";
+import { strings } from "../../../../strings";
+import ApplyLeaveScreen from "../../../../app/(tabs)/leave/apply";
 
 jest.mock("expo-router", () => ({
   router: { replace: jest.fn(), push: jest.fn() },
