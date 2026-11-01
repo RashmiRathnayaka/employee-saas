@@ -14,7 +14,9 @@ export default function TabsLayout() {
   return (
     <Tabs screenOptions={{ tabBarActiveTintColor: primaryColor, headerTintColor: primaryColor }}>
       <Tabs.Screen name="index" options={{ title: strings.tabs.home }} />
-      <Tabs.Screen name="leave" options={{ title: strings.tabs.leave }} />
+      {/* headerShown: false - the nested leave/_layout.tsx Stack owns its own
+          headers (index/apply/[id]); showing both would double up. */}
+      <Tabs.Screen name="leave" options={{ title: strings.tabs.leave, headerShown: false }} />
       <Tabs.Screen name="profile" options={{ title: strings.tabs.profile }} />
     </Tabs>
   );
