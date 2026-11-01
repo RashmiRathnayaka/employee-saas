@@ -117,5 +117,5 @@ pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the tes
 - [x] 1.3 Company setup, departments, designations, employees
 - [x] 1.4 Leave module + sick leave documents
 - [x] 1.5 Web portal (HR, Manager, Company Admin, Super Admin)
-- [ ] 1.6 Mobile MVP
+- [x] 1.6 Mobile MVP
 - [ ] 1.7 In-app notifications

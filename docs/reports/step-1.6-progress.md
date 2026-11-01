@@ -3,16 +3,13 @@
 Resume point for an interrupted/cleared session. Check off as completed; keep
 notes short — the final write-up goes in `docs/reports/step-1.6.md`.
 
-## STOPPED HERE (2026-11-01, end of 1.6b)
+## STEP 1.6 COMPLETE (2026-11-01)
 
-1.6b is complete and verified, including two follow-up fixes requested
-before commit (friendly mobile form error messages, and the real root
-cause of the earlier test-suite deadlock - see the notes below). The root
-`pnpm test` was run 3 times in a row, all 3 green (mobile 13/13, web 18/18,
-api 146/146 each time). Whole-workspace typecheck/lint are clean. Nothing
-in this step has been committed — per CLAUDE.md's updated "How to work"
-rules, commits/pushes are the developer's own action. Resume at 1.6c (sick
-leave proof upload).
+1.6a, 1.6b, and 1.6c are all done and verified. 1.6a and 1.6b were
+committed and pushed by the developer directly. 1.6c (this session) is
+verified but not yet committed — per CLAUDE.md's "How to work" rules,
+commits/pushes are the developer's own action. See docs/reports/step-1.6.md
+for the full write-up and commit message suggestion.
 
 ## 1.6a — Auth + shell
 - [x] Expo app scaffolded in `apps/mobile` (Expo Router, TS)
@@ -40,19 +37,19 @@ leave proof upload).
 - [x] typecheck/lint/test clean
 
 ## 1.6c — Sick leave proof upload
-- [ ] Camera (expo-image-picker) + file (expo-document-picker) picking
-- [ ] Client-side compress/resize, 5MB/type guard before picking/sending
-- [ ] Multipart upload w/ progress + API error surfacing
-- [ ] Document list + review status on request detail; re-upload on INFO_REQUIRED/REJECTED
-- [ ] Open document via expo-web-browser (prefix relative URL with API origin)
-- [ ] Tests: oversized/wrong-type rejected before send
-- [ ] Whole-workspace typecheck/lint/test clean
+- [x] Camera (expo-image-picker) + file (expo-document-picker) picking
+- [x] Client-side compress/resize, 5MB/type guard before picking/sending
+- [x] Multipart upload w/ loading state + API error surfacing
+- [x] Document list + review status on request detail; re-upload on INFO_REQUIRED/REJECTED
+- [x] Open document via expo-web-browser (prefix relative URL with API origin)
+- [x] Tests: oversized/wrong-type rejected before send
+- [x] Whole-workspace typecheck/lint/test clean
 
 ## Finish
-- [ ] README "Run the app on your phone" section
-- [ ] CLAUDE.md status updated
-- [ ] docs/reports/step-1.6.md written
-- [ ] Hand off to developer for commit/push (per updated CLAUDE.md rules, this agent no longer commits or pushes)
+- [x] README "Run the app on your phone" section
+- [x] CLAUDE.md status updated
+- [x] docs/reports/step-1.6.md written
+- [x] Hand off to developer for commit/push (per updated CLAUDE.md rules, this agent no longer commits or pushes)
 
 ## Notes / decisions log
 (append short dated notes here as decisions are made, so a resumed session has them)
@@ -199,3 +196,60 @@ leave proof upload).
     test helper) with this helper. Side effect: the whole api suite got
     noticeably faster too (~140s -> ~70-80s). Verified by running the
     root `pnpm test` 3 times in a row after the fix - all 3 green.
+- 2026-11-01, 1.6c:
+  - No API changes needed - the sick-leave-document endpoints
+    (`apps/api/src/modules/leaveDocuments`) already covered everything
+    this sub-step required (upload, list, download URL, HR review),
+    built back in Step 1.4.
+  - `expo-image-picker`, `expo-document-picker`, `expo-image-manipulator`,
+    and `expo-web-browser` were already present in `package.json` from the
+    1.6a scaffold (anticipating this sub-step) but unused until now. Ran
+    `npx expo install --check` before writing any native-module code and
+    found all four, plus `expo-secure-store` (in active use since 1.6a),
+    pinned below SDK 58's expected range (e.g. `expo-image-picker@17.0.11`
+    vs. expected `~58.0.10` - Expo moved several first-party modules to
+    track the SDK's own major version number starting with SDK 58). Ran
+    `npx expo install --fix`, which bumped all five to their SDK
+    58-aligned versions and auto-added `expo-secure-store` to
+    `app.json`'s `plugins` array (now required by that package's newer
+    config-plugin setup). Re-ran typecheck/lint/test after the bump -
+    all clean; no API shape changes in the packages actually used.
+  - Used `expo-image-manipulator`'s current (non-deprecated) API
+    (`ImageManipulator.manipulate(uri).resize(...).renderAsync()` then
+    `.saveAsync(...)`) rather than the older `manipulateAsync()` function,
+    which is still exported for backwards compatibility but flagged
+    `@deprecated` in its own types.
+  - Avoided adding `expo-file-system` as a new dependency just to read back
+    a compressed image's byte size: `saveAsync({ base64: true, ... })`
+    already returns the image as a base64 string, and a base64 string's
+    decoded byte length is computable directly from its own length
+    (`floor(length * 3/4) - padding`), so no extra native module was
+    needed. Document-picker files don't need this at all -
+    `DocumentPickerAsset.size` is already in bytes.
+  - Client-side validation (`src/lib/fileValidation.ts`) deliberately
+    mirrors the API's own allow-list (jpg/png/pdf, 5 MB) exactly, so a
+    rejected file fails fast on-device with the same rule the server would
+    apply, instead of failing only after an upload round-trip.
+  - Reused the existing `api.upload()` (plain `fetch`-based multipart,
+    already written in 1.6a's API client) rather than building a separate
+    `XMLHttpRequest`-based path for a literal upload-percentage progress
+    bar. React Native's `fetch` has no upload-progress event, and the
+    step's "progress/loading state" wording is satisfied by a spinner +
+    "Uploading..." label - the web portal's own equivalent upload (Step
+    1.5) only shows a loading state too, so this keeps both clients
+    consistent and avoids a second HTTP code path to maintain.
+  - Picker/compression code (`src/lib/proofUpload.ts`) and the native
+    camera/gallery/file-picker interactions themselves have no automated
+    test coverage - jest-expo doesn't exercise real native pickers, and
+    mocking three separate native modules' happy/cancel/permission-denied
+    paths wasn't judged worth the cost for an MVP; the one thing explicitly
+    required to be tested (reject-before-send on type/size) is pure logic
+    in `fileValidation.ts` and is fully covered. Documented as a known
+    limitation in the README for a manual on-device check.
+  - Replaced the README's old terse "Mobile (Expo) on a LAN device" note
+    with the full beginner "Run the app on your phone" walkthrough the
+    step asked for (same Wi-Fi, `ipconfig`, `.env`, firewall rule, two
+    terminals, QR scan, which seeded login to use, common errors) and
+    folded the old note's file-download point into it. Also deleted a
+    stale "Known limitations" bullet claiming `apps/mobile` was still a
+    placeholder package - that stopped being true back in 1.6a.

@@ -267,20 +267,83 @@ logs back in as the employee to confirm the request shows `APPROVED` and the
 balance reflects it - then cleans up by revoking the request as
 `COMPANY_ADMIN` so reruns on the same day don't collide with it.
 
-## Mobile (Expo) on a LAN device
+## Run the app on your phone
 
-A phone running the Expo app needs to reach the API at your machine's LAN
-IP (not `localhost`) for every endpoint anyway, including file downloads -
-`local`-driver downloads are just another API route
-(`/api/v1/files/download`), so there's nothing extra to configure for them
-specifically. Only `STORAGE_DRIVER=s3` needs its own LAN-reachable address:
-`apps/api/.env`'s `S3_PUBLIC_URL` (defaults to `http://localhost:9000`,
-which only works from the same machine) should be set to your machine's LAN
-IP in that case.
+A step-by-step walkthrough for running the mobile app in Expo Go on an
+Android phone, written for a first time through.
+
+**1. Same Wi-Fi network.** Your phone and your computer need to be on the
+same Wi-Fi network. A work VPN or a "guest" network that isolates devices
+from each other often won't work - try a normal home Wi-Fi first.
+
+**2. Find your computer's LAN IP.** On Windows, open a terminal and run:
+
+```
+ipconfig
+```
+
+Look for "IPv4 Address" under your active adapter (usually "Wireless LAN
+adapter Wi-Fi"). It looks like `192.168.1.100`. That's the address your
+phone uses to reach your computer - not `localhost`, which only means
+"this same device".
+
+**3. Point the mobile app at your API.** Copy `apps/mobile/.env.example` to
+`apps/mobile/.env` and set `EXPO_PUBLIC_API_URL` to that IP:
+
+```
+EXPO_PUBLIC_API_URL=http://192.168.1.100:4000/api/v1
+```
+
+**4. Allow port 4000 through the Windows Firewall.** The API listens on
+port 4000. Windows Firewall blocks incoming connections from other devices
+on the network by default, including your phone. Allow it once, in an
+elevated (Administrator) PowerShell:
+
+```powershell
+New-NetFirewallRule -DisplayName "Employee SaaS API (dev)" -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Allow
+```
+
+**5. Start the API, then start Expo.** In one terminal:
+
+```
+pnpm --filter @employee-saas/api dev
+```
+
+In a second terminal:
+
+```
+pnpm --filter @employee-saas/mobile start
+```
+
+This prints a QR code. Install **Expo Go** from the Play Store on your
+Android phone, open it, and scan the QR code from Expo Go's own scanner
+(not your phone's regular camera app).
+
+**6. Log in.** Use any seeded HR, Manager, or Employee account from the
+table above, e.g. company code `ACME`, employee code `ACM-EMP-003` (or
+email `alex@acme.test`), password `Passw0rd!`. Company Admin accounts have
+no employee profile and will see the "This app is for employees" screen
+instead.
+
+**Common errors and fixes**
+
+| Error | Fix |
+|---|---|
+| "Could not reach the server. Check your Wi-Fi and the API URL." (network request failed) | Phone and computer aren't on the same Wi-Fi, the firewall rule from step 4 is missing, or `EXPO_PUBLIC_API_URL` still says `localhost` instead of your LAN IP. Env vars are only read when Expo starts, so restart `expo start` after editing `.env`. |
+| Expo Go shows "Project is incompatible with this version of Expo Go" (SDK mismatch) | Expo Go's installed version doesn't match this project's Expo SDK (currently 58). Update Expo Go from the Play Store. |
+| Metro can't resolve `@employee-saas/shared` ("Unable to resolve module") | Metro started before `pnpm install` finished linking the workspace, or `apps/mobile/metro.config.js`'s `watchFolders`/`nodeModulesPaths` wiring is missing. Stop Expo, re-run `pnpm install` at the repo root, then restart with `pnpm --filter @employee-saas/mobile start -- --clear` to also clear Metro's cache. |
+
+Technical note on file downloads: once your phone can reach the API at
+all, sick leave proof documents work the same way with no extra
+configuration - the `local` storage driver serves them from this same API
+at `/api/v1/files/download`. Only `STORAGE_DRIVER=s3` needs its own
+LAN-reachable address: set `apps/api/.env`'s `S3_PUBLIC_URL` to your LAN IP
+in that case (it defaults to `http://localhost:9000`, which only works
+from the same machine).
 
 ## Known limitations
 
-- `apps/mobile` is a placeholder workspace package (no Expo app yet) — lands in Step 1.6.
 - No in-app notification UI yet — rows are written (`createNotification`) and a web screen to read them lands in Step 1.7.
 - Automated proof-deadline reminders aren't implemented — `leave_requests.proofDueAt` is stored but nothing currently acts on it.
 - The web portal's HR leave-requests "Pending" tab and its employee/leave-type filter dropdowns fetch up to 100 rows client-side rather than paginating server-side for every case — fine at Phase 1's scale, revisit if a company exceeds ~100 employees or concurrent pending requests.
+- Mobile sick-leave proof upload (camera/gallery/file picking, image compression) has no automated test coverage beyond the client-side file-validation logic (type/size rejection) — the native pickers themselves aren't exercised by the test suite and need a manual check on a real device.
