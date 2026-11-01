@@ -3,13 +3,16 @@
 Resume point for an interrupted/cleared session. Check off as completed; keep
 notes short — the final write-up goes in `docs/reports/step-1.6.md`.
 
-## STOPPED HERE (2026-11-01, end of 1.6a)
+## STOPPED HERE (2026-11-01, end of 1.6b)
 
-1.6a is complete and verified. Whole-workspace `pnpm typecheck`, `pnpm lint`,
-`pnpm test` are all clean (mobile 10/10, web 18/18, api 145/145). Nothing in
-this step has been committed — per CLAUDE.md's updated "How to work" rules,
-commits/pushes are the developer's own action. Resume at 1.6b (Backend:
-EmployeeSchema name objects, then Home/Profile/Leave screens).
+1.6b is complete and verified, including two follow-up fixes requested
+before commit (friendly mobile form error messages, and the real root
+cause of the earlier test-suite deadlock - see the notes below). The root
+`pnpm test` was run 3 times in a row, all 3 green (mobile 13/13, web 18/18,
+api 146/146 each time). Whole-workspace typecheck/lint are clean. Nothing
+in this step has been committed — per CLAUDE.md's updated "How to work"
+rules, commits/pushes are the developer's own action. Resume at 1.6c (sick
+leave proof upload).
 
 ## 1.6a — Auth + shell
 - [x] Expo app scaffolded in `apps/mobile` (Expo Router, TS)
@@ -28,13 +31,13 @@ EmployeeSchema name objects, then Home/Profile/Leave screens).
 - [x] typecheck/lint/test clean (whole workspace)
 
 ## 1.6b — Profile + Leave
-- [ ] Backend: EmployeeSchema gets department/designation/manager name objects
-- [ ] Home: greeting, balances summary, pending count, next upcoming leave
-- [ ] Profile: view + edit phone
-- [ ] Leave tab: balances, request list w/ status chips (plain-language), detail w/ approval history, cancel
-- [ ] Apply-for-leave form: type picker, dates, half-day toggle, reason, live total-days preview, field errors, sick-leave past-dates + proof prompt
-- [ ] Tests: apply-leave validation, status chip mapping
-- [ ] typecheck/lint/test clean
+- [x] Backend: EmployeeSchema gets department/designation/manager name objects
+- [x] Home: greeting, balances summary, pending count, next upcoming leave
+- [x] Profile: view + edit phone
+- [x] Leave tab: balances, request list w/ status chips (plain-language), detail w/ approval history, cancel
+- [x] Apply-for-leave form: type picker, dates, half-day toggle, reason, live total-days preview, field errors, sick-leave past-dates + proof prompt
+- [x] Tests: apply-leave validation (required fields + half-day rule), status chip mapping
+- [x] typecheck/lint/test clean
 
 ## 1.6c — Sick leave proof upload
 - [ ] Camera (expo-image-picker) + file (expo-document-picker) picking
@@ -115,3 +118,84 @@ EmployeeSchema name objects, then Home/Profile/Leave screens).
     `pnpm --filter @employee-saas/api db:generate`.
   - End state: `pnpm typecheck`, `pnpm lint`, `pnpm test` all clean across
     all 4 workspaces (mobile 10/10, web 18/18, api 145/145).
+- 2026-11-01, 1.6b:
+  - Backend: `EmployeeSchema` (packages/shared) gets nested `department`,
+    `designation`, `manager` name objects alongside the existing *Id
+    fields. Needed because an EMPLOYEE's own role can't call
+    `GET /employees/:id` for their manager (self/team/admin-only per
+    docs/api-phase1.md), so without this the mobile Profile screen would
+    have no way to show a manager's name at all. All Prisma queries in
+    `employees.service.ts` that return a full employee now `include` these
+    three relations (all already existed on the `Employee` model - no
+    migration needed). New API test:
+    "resolves department, designation, and manager as nested name objects,
+    and null when unset".
+  - Added `@react-native-community/datetimepicker` (asked first, per
+    CLAUDE.md - approved) for the apply-leave form's start/end date
+    pickers; `npx expo install` picked the SDK 58-compatible version and
+    registered its config plugin in app.json automatically.
+  - Leave tab restructured from a flat `(tabs)/leave.tsx` into a nested
+    Stack (`(tabs)/leave/{_layout,index,apply,[id]}.tsx`) so the list,
+    apply form, and detail screen can navigate between each other within
+    the tab; the outer Tabs.Screen for "leave" sets `headerShown: false`
+    so the inner Stack's own headers aren't doubled up.
+  - Real bug caught by the apply-leave test, not just a test-authoring
+    issue: react-hook-form only calls `onSubmit` when the resolver
+    (zodResolver) says the *whole* form is valid. `CreateLeaveRequestSchema`'s
+    `leaveTypeId` is a bare `z.string()` (no `.min(1)`), so an empty
+    selection alone never fails the resolver - but when startDate/endDate
+    are ALSO empty (and those DO fail the isoDate regex), `onSubmit` never
+    ran at all, so the manual "leave type is required" check inside it
+    never fired either. Fixed with `handleSubmit(onSubmit, onInvalid)`,
+    calling the same leaveTypeId check from both.
+  - Mocked `@react-native-community/datetimepicker` for tests
+    (`apps/mobile/__mocks__/@react-native-community/datetimepicker.js`) -
+    renders a plain pressable "Confirm date" instead of a real OS dialog.
+    First attempt read the test-picked date back via a module-local
+    variable + `jest.requireMock(...).__setNextPickedDate(...)`, mirroring
+    the `expo-secure-store` mock's `__reset` pattern from 1.6a - but the
+    component kept seeing today's real date instead, implying the test and
+    the component were resolving to different cached instances of the
+    mock. Switched to a `globalThis` property instead (set directly by the
+    test, read directly by the mock's onPress), which sidesteps the issue
+    entirely since `globalThis` can't have two instances.
+  - Follow-up requested before commit: the apply-leave form was showing
+    `CreateLeaveRequestSchema`'s raw zod regex message ("must be
+    YYYY-MM-DD") when a date field was left empty - a developer-facing
+    message, not a user-facing one. Fixed in `apply.tsx` with explicit
+    friendly messages per field (`leaveTypeRequired`/`startDateRequired`/
+    `endDateRequired` in strings.ts), applied via `handleSubmit(onSubmit,
+    onInvalid)` so they override the resolver's own message immediately,
+    not just after the fact. Test updated to assert the raw message never
+    appears (`queryByText("must be YYYY-MM-DD")` is null) alongside the
+    friendly ones.
+  - Combined `pnpm -r test` (web+api+mobile in parallel) hit a Postgres
+    deadlock + a 5s test timeout in `leaveDecisions.test.ts`. First guess
+    ("transient resource contention, not a real issue") was wrong, and
+    the developer correctly pushed back on it - re-investigated and found
+    a real, fixable cause: `argon2.hash()` was called with its library
+    defaults (64 MiB memory cost, by design expensive - that's the whole
+    point for real passwords) everywhere a login gets created, including
+    `createTestUser`/`setUpCompanyWithUser`, which nearly every API test
+    calls at least once. Under the extra CPU contention from three
+    parallel test runners, the cumulative hashing cost in a
+    multi-employee test (the one that failed creates 3 logins) pushed it
+    past vitest's 5s default timeout. Vitest's timeout only abandons the
+    *test* - it doesn't cancel the in-flight Prisma transaction - so that
+    abandoned transaction was still running when the *next* test's
+    `beforeEach` truncate fired, and the two collided: a real deadlock,
+    just not an application logic bug (confirmed no un-awaited
+    `tx.*`/`$transaction` calls anywhere in the leave request/decision
+    services - all notification writes are properly inside `await
+    Promise.all(...)`). Fixed at the root: new
+    `apps/api/src/lib/passwordHashing.ts` exports `hashPassword()`, which
+    uses argon2's normal (strong) defaults everywhere except
+    `NODE_ENV==="test"`, where it uses a much cheaper cost - test security
+    never depended on hash strength, and `argon2.verify()` always reads
+    the real parameters back out of the hash string itself, so lowering
+    the cost for test-created accounts doesn't need any corresponding
+    change anywhere else. Replaced every direct `argon2.hash()` call site
+    (auth/companies/employees/users services, plus the `createTestUser`
+    test helper) with this helper. Side effect: the whole api suite got
+    noticeably faster too (~140s -> ~70-80s). Verified by running the
+    root `pnpm test` 3 times in a row after the fix - all 3 green.
