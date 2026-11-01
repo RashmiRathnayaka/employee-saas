@@ -1,8 +1,8 @@
-import argon2 from "argon2";
 import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { generateTempPassword } from "../../lib/tempPassword.js";
+import { hashPassword } from "../../lib/passwordHashing.js";
 
 type AssignableRole = "COMPANY_ADMIN" | "HR" | "MANAGER";
 
@@ -40,7 +40,7 @@ export async function createUser(params: {
   }
 
   const temporaryPassword = generateTempPassword();
-  const passwordHash = await argon2.hash(temporaryPassword);
+  const passwordHash = await hashPassword(temporaryPassword);
 
   const user = await tenant.$transaction(async (tx) => {
     const created = await tx.user.create({
@@ -122,7 +122,7 @@ export async function resetUserPassword(params: {
   }
 
   const temporaryPassword = generateTempPassword();
-  const passwordHash = await argon2.hash(temporaryPassword);
+  const passwordHash = await hashPassword(temporaryPassword);
 
   await tenant.$transaction(async (tx) => {
     await tx.user.update({

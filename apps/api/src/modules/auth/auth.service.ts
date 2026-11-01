@@ -6,6 +6,7 @@ import { platformPrisma } from "../../lib/prisma.js";
 import { signAccessToken } from "../../lib/jwt.js";
 import { generateRefreshToken, hashRefreshToken, REFRESH_TOKEN_TTL_MS } from "../../lib/refreshToken.js";
 import { writeAudit } from "../../lib/audit.js";
+import { hashPassword } from "../../lib/passwordHashing.js";
 
 const genericLoginError = () =>
   new ApiError(401, "INVALID_CREDENTIALS", "Invalid company code, identifier, or password.");
@@ -254,7 +255,7 @@ export async function changePassword(params: { userId: string; currentPassword: 
     throw new ApiError(400, "INVALID_PASSWORD", "Current password is incorrect.");
   }
 
-  const newHash = await argon2.hash(params.newPassword);
+  const newHash = await hashPassword(params.newPassword);
 
   await platformPrisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { passwordHash: newHash, mustChangePassword: false } });

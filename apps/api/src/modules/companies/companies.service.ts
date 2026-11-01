@@ -1,9 +1,9 @@
-import argon2 from "argon2";
 import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { generateTempPassword } from "../../lib/tempPassword.js";
 import { DEFAULT_LEAVE_TYPES } from "../../lib/defaultLeaveTypes.js";
+import { hashPassword } from "../../lib/passwordHashing.js";
 
 export async function createCompany(params: {
   name: string;
@@ -17,7 +17,7 @@ export async function createCompany(params: {
   }
 
   const temporaryPassword = generateTempPassword();
-  const passwordHash = await argon2.hash(temporaryPassword);
+  const passwordHash = await hashPassword(temporaryPassword);
 
   const { company, admin } = await platformPrisma.$transaction(async (tx) => {
     const company = await tx.company.create({ data: { name: params.name, code: params.code } });

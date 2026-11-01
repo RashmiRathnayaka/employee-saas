@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
-import argon2 from "argon2";
 import request from "supertest";
 import type { Express } from "express";
 import type { Role } from "@employee-saas/shared";
 import { platformPrisma } from "../lib/prisma.js";
 import { DEFAULT_LEAVE_TYPES } from "../lib/defaultLeaveTypes.js";
+import { hashPassword } from "../lib/passwordHashing.js";
 
 export const DEFAULT_TEST_PASSWORD = "Passw0rd!";
 
@@ -33,7 +33,7 @@ export async function createTestUser(params: {
   mustChangePassword?: boolean;
 }) {
   const password = params.password ?? DEFAULT_TEST_PASSWORD;
-  const passwordHash = await argon2.hash(password);
+  const passwordHash = await hashPassword(password);
 
   let employeeId: string | undefined;
   if (params.employeeCode) {
