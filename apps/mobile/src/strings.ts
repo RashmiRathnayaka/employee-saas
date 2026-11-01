@@ -176,6 +176,7 @@ export const strings = {
     INSUFFICIENT_BALANCE: "Not enough leave balance available for this request.",
     UNSUPPORTED_FILE_TYPE: "Only jpg, png, and pdf files are accepted.",
     FILE_TOO_LARGE: "That file is larger than the 5 MB limit.",
+    UPLOAD_FAILED: "Could not prepare or send the file. Try a different photo or file.",
     network: "Could not reach the server. Check your Wi-Fi and the API URL.",
   },
 };

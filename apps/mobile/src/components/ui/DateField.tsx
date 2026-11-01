@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import DateTimePicker, {
+  DateTimePickerAndroid,
+  type DateTimePickerChangeEvent,
+} from "@react-native-community/datetimepicker";
+import { toLocalIsoDate } from "../../lib/formatDate";
 import { strings } from "../../strings";
 
 type DateFieldProps = {
@@ -12,21 +16,48 @@ type DateFieldProps = {
   error?: string;
 };
 
-function toIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
 export function DateField({ label, value, onChange, minimumDate, error }: DateFieldProps) {
+  // Only read on iOS, which renders the picker inline below. Android never
+  // sets this - see openPicker().
   const [show, setShow] = useState(false);
   const dateValue = value ? new Date(`${value}T00:00:00`) : new Date();
 
-  function handleChange(event: DateTimePickerEvent, selectedDate?: Date) {
-    // Android dismisses its own dialog; iOS shows an inline picker that
-    // stays open until the user picks a value or taps away.
-    if (Platform.OS === "android") setShow(false);
-    if (event.type === "set" && selectedDate) {
-      onChange(toIsoDate(selectedDate));
-      if (Platform.OS === "ios") setShow(false);
+  // `onChange` is deprecated in favour of these two, which split what it
+  // used to encode in event.type - onValueChange only ever fires with an
+  // actual picked date, so there's no "set" check left to get wrong.
+  function handleValueChange(_event: DateTimePickerChangeEvent, selectedDate: Date) {
+    onChange(toLocalIsoDate(selectedDate));
+    setShow(false);
+  }
+
+  function handleDismiss() {
+    setShow(false);
+  }
+
+  function openPicker() {
+    if (Platform.OS === "android") {
+      // Rendering <DateTimePicker> inline on Android (as this component
+      // used to, matching this library's own example) ties the native
+      // dialog's lifecycle to React's render tree. Reproduced on a real
+      // device: navigating the dialog to a different month, or anything
+      // else that re-renders the surrounding form while the dialog is
+      // open (react-hook-form's watch() fires on every keystroke; the
+      // debounced total-days preview settles mid-interaction too),
+      // remounts the element and snaps the selection straight back to
+      // `value` - the dialog could never actually keep a new pick.
+      // DateTimePickerAndroid.open() is a single imperative native call
+      // with no element in the React tree at all, so no parent re-render
+      // can touch it once it's open - this is also the API this library
+      // recommends for Android.
+      DateTimePickerAndroid.open({
+        value: dateValue,
+        mode: "date",
+        minimumDate,
+        onValueChange: handleValueChange,
+        onDismiss: handleDismiss,
+      });
+    } else {
+      setShow(true);
     }
   }
 
@@ -35,7 +66,7 @@ export function DateField({ label, value, onChange, minimumDate, error }: DateFi
       <Text style={styles.label}>{label}</Text>
       <Pressable
         style={[styles.input, error ? styles.inputError : null]}
-        onPress={() => setShow(true)}
+        onPress={openPicker}
         accessibilityRole="button"
         accessibilityLabel={label}
       >
@@ -46,13 +77,14 @@ export function DateField({ label, value, onChange, minimumDate, error }: DateFi
           {error}
         </Text>
       ) : null}
-      {show ? (
+      {Platform.OS !== "android" && show ? (
         <DateTimePicker
           value={dateValue}
           mode="date"
           display="default"
           minimumDate={minimumDate}
-          onChange={handleChange}
+          onValueChange={handleValueChange}
+          onDismiss={handleDismiss}
         />
       ) : null}
     </View>

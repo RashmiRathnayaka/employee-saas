@@ -112,7 +112,21 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
   let res: Response;
   try {
     res = await rawRequest(path, options);
-  } catch {
+  } catch (error) {
+    // A thrown fetch() here means the request never reached the network at
+    // all - that's genuinely "offline/wrong URL" for a plain JSON request,
+    // but for a multipart upload it's just as likely to be a bad file (an
+    // unreadable uri, a FormData part the native layer rejected) failing
+    // before any bytes go out. Logged (not shown to the user - it's a raw
+    // JS error, never request/response content) so this is still
+    // debuggable instead of silently indistinguishable from a network
+    // outage, which is what masked the real cause of this exact bug before.
+    if (__DEV__) {
+      console.warn(`[apiClient] ${options.method ?? "GET"} ${path} failed before a response:`, error);
+    }
+    if (options.isFormData) {
+      throw new ApiClientError(0, "UPLOAD_FAILED", "Could not prepare or send the file. Try a different photo or file.");
+    }
     throw new ApiClientError(0, "NETWORK_ERROR", "Could not reach the server. Check your Wi-Fi and the API URL.");
   }
 

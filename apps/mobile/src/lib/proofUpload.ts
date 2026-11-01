@@ -1,4 +1,5 @@
 import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 
@@ -6,21 +7,20 @@ export type PickedProofFile = { uri: string; name: string; mimeType: string; siz
 
 export class ProofPickerPermissionError extends Error {}
 
-// Base64 has no exact byte-length field of its own, so this derives one from
-// the encoded string length (4 base64 chars encode 3 bytes, minus `=` padding).
-function base64SizeBytes(base64: string): number {
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  return Math.floor((base64.length * 3) / 4) - padding;
-}
-
 // Resizes to a max width and recompresses as JPEG so a phone photo (often
 // several MB straight off the camera) lands well under the 5 MB proof limit
-// before validateProofFile even runs. base64:true is requested purely to
-// read back the compressed size - the upload itself uses saveAsync's uri.
+// before validateProofFile even runs. Reads the resulting size directly off
+// the saved file (`File#size`, a plain filesystem stat) rather than asking
+// saveAsync for `base64: true` - requesting base64 round-trips the whole
+// image through the JS bridge as a giant string just to measure it, which on
+// a real device either throws or silently poisons the rest of the upload
+// (this was reproduced on a real Android device: the picker, compress, and
+// upload all looked fine in code, but no request ever reached the API).
 async function compressImage(uri: string): Promise<{ uri: string; sizeBytes: number }> {
   const rendered = await ImageManipulator.manipulate(uri).resize({ width: 1600 }).renderAsync();
-  const result = await rendered.saveAsync({ compress: 0.6, format: SaveFormat.JPEG, base64: true });
-  return { uri: result.uri, sizeBytes: result.base64 ? base64SizeBytes(result.base64) : 0 };
+  const result = await rendered.saveAsync({ compress: 0.6, format: SaveFormat.JPEG });
+  const file = new File(result.uri);
+  return { uri: result.uri, sizeBytes: file.exists ? file.size : 0 };
 }
 
 async function toProofFile(uri: string): Promise<PickedProofFile> {

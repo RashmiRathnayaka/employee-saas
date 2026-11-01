@@ -15,14 +15,24 @@ import { usePrimaryColor } from "../../../lib/theme";
 import { api } from "../../../lib/apiClient";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import { applyApiErrorToForm, getErrorMessage } from "../../../lib/errorMapping";
+import { addDaysToIsoDate, todayLocalIsoDate } from "../../../lib/formatDate";
 import { strings } from "../../../strings";
 
 // z.input, not z.infer - CreateLeaveRequestSchema's `.default(...)` fields
 // are optional on the way in, matching react-hook-form's defaultValues shape.
 type CreateLeaveRequestFormValues = z.input<typeof CreateLeaveRequestSchema>;
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+// Mirrors the API's own rule (apps/api/src/modules/leaveRequests -
+// PAST_DATE_WINDOW_DAYS): a leave type that allows past dates accepts a
+// start date up to 30 days back; one that doesn't accepts today or later.
+// Keeping this in sync with the API means the native picker's own
+// minimumDate rejects an out-of-range day before the user ever submits,
+// instead of letting the server reject it after the fact.
+const PAST_DATE_WINDOW_DAYS = 30;
+
+function minimumStartDate(allowPastDates: boolean | undefined): Date {
+  const isoBound = allowPastDates ? addDaysToIsoDate(todayLocalIsoDate(), -PAST_DATE_WINDOW_DAYS) : todayLocalIsoDate();
+  return new Date(`${isoBound}T00:00:00`);
 }
 
 export default function ApplyLeaveScreen() {
@@ -191,7 +201,7 @@ export default function ApplyLeaveScreen() {
               label={strings.applyLeave.startDate}
               value={field.value ?? ""}
               onChange={field.onChange}
-              minimumDate={selectedLeaveType?.allowPastDates ? undefined : new Date(todayIso())}
+              minimumDate={minimumStartDate(selectedLeaveType?.allowPastDates)}
               error={errors.startDate?.message}
             />
           )}

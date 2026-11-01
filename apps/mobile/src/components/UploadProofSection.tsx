@@ -1,4 +1,5 @@
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { File } from "expo-file-system";
 import * as WebBrowser from "expo-web-browser";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { LeaveRequestDto } from "@employee-saas/shared";
@@ -27,8 +28,13 @@ export function UploadProofSection({ requestId, proofStatus }: { requestId: stri
 
   const uploadMutation = useMutation({
     mutationFn: (file: PickedProofFile) => {
+      // Expo SDK 58's fetch rejects the classic React Native FormData part
+      // shape ({ uri, name, type }) with "Unsupported FormDataPart
+      // implementation" - it only accepts real Blob-like values now. An
+      // expo-file-system File implements Blob and reads straight off disk,
+      // which is the currently-documented way to upload a local file.
       const formData = new FormData();
-      formData.append("file", { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
+      formData.append("file", new File(file.uri), file.name);
       return api.upload(`/leave-requests/${requestId}/documents`, formData);
     },
     onSuccess: async () => {

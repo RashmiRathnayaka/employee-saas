@@ -107,3 +107,23 @@ describe("apiRequest - refresh-once-then-retry", () => {
     expect((await getTokens()).accessToken).toBeNull();
   });
 });
+
+describe("apiRequest - when fetch itself throws (never reaches the network)", () => {
+  it("reports UPLOAD_FAILED for a multipart upload, not the generic network message", async () => {
+    mockRoute("POST", "/api/v1/upload-test", () => {
+      throw new Error("simulated native fetch failure, e.g. an unreadable file uri");
+    });
+
+    await expect(apiRequest("/upload-test", { method: "POST", body: new FormData(), isFormData: true })).rejects.toMatchObject(
+      { code: "UPLOAD_FAILED" },
+    );
+  });
+
+  it("reports NETWORK_ERROR for a plain JSON request", async () => {
+    mockRoute("GET", "/api/v1/json-test", () => {
+      throw new Error("simulated offline device");
+    });
+
+    await expect(apiRequest("/json-test")).rejects.toMatchObject({ code: "NETWORK_ERROR" });
+  });
+});
