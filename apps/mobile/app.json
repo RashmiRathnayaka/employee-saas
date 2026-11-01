@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Employee SaaS",
+    "slug": "employee-saas-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "employeesaas",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "com.employeesaas.mobile"
+    },
+    "ios": {
+      "bundleIdentifier": "com.employeesaas.mobile",
+      "supportsTablet": false
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -2,7 +2,41 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# apps/mobile needs React 19 while apps/web is still on React 18. pnpm's
+# node_modules/.pnpm/node_modules convenience-hoist layer (for packages that
+# do non-strict bare `require()` lookups) doesn't know about that per-app
+# split and was nondeterministically picking ONE react/@types-react version
+# workspace-wide, which apps/web's tsc then picked up for react-router-dom's
+# own type resolution (see docs/reports/step-1.6.md). Excluding these from
+# the hoist forces every consumer to resolve its own correctly peer-matched
+# copy instead.
+hoistPattern:
+  - "*"
+  - "!react"
+  - "!react-dom"
+  - "!@types/react"
+  - "!@types/react-dom"
+
+# react-router(-dom)'s own .d.ts files reference 'react' types without
+# declaring @types/react as a real dependency edge - normally harmless
+# (it just resolves whatever's hoisted), but with hoisting for these
+# packages disabled above, there's nothing left to find by walking up.
+# This makes pnpm treat @types/react(-dom) as a real dependency of
+# react-router(-dom), so it resolves them the same way it resolves their
+# react/react-dom peers: correctly scoped to web's React 18, no hoisting
+# needed either way.
+packageExtensions:
+  react-router@7.18.5:
+    dependencies:
+      "@types/react": "^18.3.11"
+  react-router-dom@7.18.5:
+    dependencies:
+      "@types/react": "^18.3.11"
+      "@types/react-dom": "^18.3.0"
+
 allowBuilds:
+  '@parcel/watcher': true
+  unrs-resolver: true
   '@prisma/client': true
   '@prisma/engines': true
   argon2: true
@@ -12,8 +46,24 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - lucide-react@1.65.0
+  - "@expo/cli@58.1.18"
+  - "@expo/config@58.0.10"
+  - "@expo/fingerprint@0.21.8"
+  - "@expo/local-build-cache-provider@58.0.10"
+  - "@expo/log-box@58.0.14"
+  - "@expo/metro-config@58.0.20"
+  - "@expo/metro-runtime@58.0.16"
+  - "@expo/prebuild-config@58.0.18"
+  - "@expo/router-server@58.0.20"
+  - "@expo/schema-utils@58.0.3"
+  - babel-preset-expo@58.0.23
+  - expo-modules-core@58.0.29
+  - expo-router@58.0.29
+  - expo@58.0.22
 
 onlyBuiltDependencies:
+  - "@parcel/watcher"
+  - unrs-resolver
   - "@prisma/client"
   - "@prisma/engines"
   - argon2
