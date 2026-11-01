@@ -84,7 +84,7 @@ Do not add new frameworks or major libraries without explaining why and asking f
 3. After changes, run typecheck, lint, and tests. Fix failures before moving on.
 4. Never claim tests passed unless you actually ran them.
 5. Never commit secrets. Keep `.env.example` up to date.
-6. Commit after each working step using Conventional Commits (`feat(leave): ...`).
+6. Never run `git commit` or `git push`. At the end of each step or sub-step, stop and give the developer: the list of changed files, what to test, and a suggested Conventional Commit message.
 7. At the end of each step, report:
    - what was done
    - files changed
@@ -92,10 +92,9 @@ Do not add new frameworks or major libraries without explaining why and asking f
    - test results
    - known limitations
    - the exact next step
-8. Save every step report to `docs/reports/step-X.md` and commit it.
+8. Save every step report to `docs/reports/step-X.md`.
 9. The developer (Rashmi) is learning this stack. When you introduce a new concept or pattern, explain it briefly in plain language.
-10. Push may fail on this machine due to an SSL issue; if it does, tell the developer to push manually and continue.
-11. Never truncate, reset or reseed the DEV database without asking the developer first. The test database may be reset freely.
+10. Never truncate, reset or reseed the DEV database without asking the developer first. The test database may be reset freely.
 
 ## Commands
 _(Update this section as scripts are created.)_
