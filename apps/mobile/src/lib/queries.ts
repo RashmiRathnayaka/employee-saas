@@ -3,6 +3,7 @@ import type {
   EmployeeDto,
   LeaveApprovalDto,
   LeaveBalanceDto,
+  LeaveDocumentDto,
   LeaveRequestDto,
   LeaveTypeDto,
   PaginatedResponse,
@@ -63,5 +64,14 @@ export function useLeaveRequestDetail(id: string | undefined) {
     queryKey: ["leave-request", id],
     queryFn: () => api.get<{ leaveRequest: LeaveRequestDto; approvals: LeaveApprovalDto[] }>(`/leave-requests/${id}`),
     enabled: !!id,
+  });
+}
+
+export function useLeaveDocuments(requestId: string | undefined) {
+  return useQuery({
+    queryKey: ["leave-documents", requestId],
+    queryFn: () => api.get<{ data: LeaveDocumentDto[] }>(`/leave-requests/${requestId}/documents`),
+    enabled: !!requestId,
+    select: (res) => res.data,
   });
 }

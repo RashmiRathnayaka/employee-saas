@@ -156,6 +156,7 @@ export const strings = {
     success: "Document uploaded",
     tooLarge: "That file is larger than the 5 MB limit.",
     unsupportedType: "Only jpg, png, and pdf files are accepted.",
+    permissionDenied: "Permission is required to use the camera or photo library.",
   },
   network: {
     offline: "No internet connection.",
