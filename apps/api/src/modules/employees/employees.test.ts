@@ -45,6 +45,60 @@ describe("employees module", () => {
     expect(getRes.body.employee.userId).toBe(withLoginRes.body.login.user.id);
   });
 
+  it("resolves department, designation, and manager as nested name objects, and null when unset", async () => {
+    const app = createApp();
+    const { token } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+
+    const departmentRes = await request(app)
+      .post("/api/v1/departments")
+      .set("Authorization", token)
+      .send({ name: "Engineering" });
+    const designationRes = await request(app)
+      .post("/api/v1/designations")
+      .set("Authorization", token)
+      .send({ name: "Senior Engineer" });
+    const managerRes = await request(app)
+      .post("/api/v1/employees")
+      .set("Authorization", token)
+      .send({ firstName: "Mana", lastName: "Ger", joiningDate: "2025-01-01" });
+
+    const createRes = await request(app)
+      .post("/api/v1/employees")
+      .set("Authorization", token)
+      .send({
+        firstName: "Rich",
+        lastName: "Profile",
+        joiningDate: "2026-01-01",
+        departmentId: departmentRes.body.department.id,
+        designationId: designationRes.body.designation.id,
+        managerId: managerRes.body.employee.id,
+      });
+    expect(createRes.body.employee.department).toEqual({ id: departmentRes.body.department.id, name: "Engineering" });
+    expect(createRes.body.employee.designation).toEqual({
+      id: designationRes.body.designation.id,
+      name: "Senior Engineer",
+    });
+    expect(createRes.body.employee.manager).toEqual({
+      id: managerRes.body.employee.id,
+      employeeCode: managerRes.body.employee.employeeCode,
+      firstName: "Mana",
+      lastName: "Ger",
+    });
+
+    // The employee with none of these set (the manager itself) gets nulls,
+    // not missing fields or an error.
+    expect(managerRes.body.employee.department).toBeNull();
+    expect(managerRes.body.employee.designation).toBeNull();
+    expect(managerRes.body.employee.manager).toBeNull();
+
+    const getRes = await request(app)
+      .get(`/api/v1/employees/${createRes.body.employee.id}`)
+      .set("Authorization", token);
+    expect(getRes.body.employee.department.name).toBe("Engineering");
+    expect(getRes.body.employee.designation.name).toBe("Senior Engineer");
+    expect(getRes.body.employee.manager.firstName).toBe("Mana");
+  });
+
   it("EMPLOYEE cannot list employees", async () => {
     const app = createApp();
     const { token } = await setUpCompanyWithUser(app, { role: "EMPLOYEE", employeeCode: "EMP-001" });

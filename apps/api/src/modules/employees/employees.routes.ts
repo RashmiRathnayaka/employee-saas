@@ -27,7 +27,13 @@ import {
 
 export const employeesRouter = Router();
 
-function toEmployeeDto(employee: Employee, userId: string | null): EmployeeDto {
+type EmployeeWithRelations = Employee & {
+  department: { id: string; name: string } | null;
+  designation: { id: string; name: string } | null;
+  manager: { id: string; employeeCode: string; firstName: string; lastName: string } | null;
+};
+
+function toEmployeeDto(employee: EmployeeWithRelations, userId: string | null): EmployeeDto {
   return {
     id: employee.id,
     companyId: employee.companyId,
@@ -42,10 +48,13 @@ function toEmployeeDto(employee: Employee, userId: string | null): EmployeeDto {
     joiningDate: employee.joiningDate.toISOString().slice(0, 10),
     status: employee.status,
     userId,
+    department: employee.department,
+    designation: employee.designation,
+    manager: employee.manager,
   };
 }
 
-type EmployeeWithUser = Employee & { user: { id: string } | null };
+type EmployeeWithUser = EmployeeWithRelations & { user: { id: string } | null };
 function toEmployeeDtoWithUser(employee: EmployeeWithUser): EmployeeDto {
   return toEmployeeDto(employee, employee.user?.id ?? null);
 }

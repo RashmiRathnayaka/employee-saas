@@ -68,6 +68,17 @@ export const EmployeeSchema = z.object({
   // The login account linked to this employee, if one exists - lets the UI
   // call /users/:id/reset-password (keyed by user id, not employee id).
   userId: z.string().nullable(),
+  // Resolved display names, nested alongside the *Id fields above (which
+  // stay as-is for anything that still just needs the id, e.g. form
+  // defaults). Added for the mobile app's Profile/Home screens: an
+  // EMPLOYEE's own role can't call GET /employees/:id for their manager
+  // (that's self/team/admin-only), so without this the mobile app would
+  // have no way to show a manager's name at all.
+  department: z.object({ id: z.string(), name: z.string() }).nullable(),
+  designation: z.object({ id: z.string(), name: z.string() }).nullable(),
+  manager: z
+    .object({ id: z.string(), employeeCode: z.string(), firstName: z.string(), lastName: z.string() })
+    .nullable(),
 });
 export type EmployeeDto = z.infer<typeof EmployeeSchema>;
 

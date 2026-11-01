@@ -1,10 +1,10 @@
-import argon2 from "argon2";
 import type { Prisma } from "@prisma/client";
 import type { Role } from "@employee-saas/shared";
 import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { generateTempPassword } from "../../lib/tempPassword.js";
+import { hashPassword } from "../../lib/passwordHashing.js";
 import { lockOrCreateBalance } from "../leaveRequests/leaveRequests.service.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
@@ -65,7 +65,7 @@ export async function createEmployee(params: {
       throw new ApiError(409, "EMAIL_TAKEN", "A user with this email already exists in this company.");
     }
     temporaryPassword = generateTempPassword();
-    passwordHash = await argon2.hash(temporaryPassword);
+    passwordHash = await hashPassword(temporaryPassword);
   }
 
   const { employee, user } = await tenant.$transaction(async (tx) => {
@@ -92,6 +92,11 @@ export async function createEmployee(params: {
         designationId: params.designationId,
         managerId: params.managerId,
         joiningDate: new Date(params.joiningDate),
+      },
+      include: {
+        department: { select: { id: true, name: true } },
+        designation: { select: { id: true, name: true } },
+        manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       },
     });
 
@@ -177,7 +182,12 @@ export async function listEmployees(params: {
       skip,
       take: params.pageSize,
       orderBy: { employeeCode: "asc" },
-      include: { user: { select: { id: true } } },
+      include: {
+        user: { select: { id: true } },
+        department: { select: { id: true, name: true } },
+        designation: { select: { id: true, name: true } },
+        manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
     }),
     tenant.employee.count({ where }),
   ]);
@@ -193,7 +203,12 @@ export async function getEmployeeById(params: {
   const tenant = getTenantPrisma(params.companyId);
   const employee = await tenant.employee.findUnique({
     where: { id: params.employeeId },
-    include: { user: { select: { id: true } } },
+    include: {
+      user: { select: { id: true } },
+      department: { select: { id: true, name: true } },
+      designation: { select: { id: true, name: true } },
+      manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+    },
   });
   if (!employee) {
     throw new ApiError(404, "NOT_FOUND", "Employee not found.");
@@ -248,7 +263,12 @@ export async function updateEmployee(params: {
     const updated = await tx.employee.update({
       where: { id: params.employeeId },
       data: params.data,
-      include: { user: { select: { id: true } } },
+      include: {
+        user: { select: { id: true } },
+        department: { select: { id: true, name: true } },
+        designation: { select: { id: true, name: true } },
+        manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
     });
     await writeAudit(tx, {
       companyId: params.companyId,
@@ -296,7 +316,12 @@ export async function updateEmployeeStatus(params: {
     const updated = await tx.employee.update({
       where: { id: params.employeeId },
       data: { status: params.status },
-      include: { user: { select: { id: true } } },
+      include: {
+        user: { select: { id: true } },
+        department: { select: { id: true, name: true } },
+        designation: { select: { id: true, name: true } },
+        manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
     });
 
     if (params.status === "INACTIVE" && linkedUser) {
@@ -361,7 +386,12 @@ export async function getOwnProfile(params: { companyId: string; employeeId: str
   const tenant = getTenantPrisma(params.companyId);
   const employee = await tenant.employee.findUnique({
     where: { id: params.employeeId },
-    include: { user: { select: { id: true } } },
+    include: {
+      user: { select: { id: true } },
+      department: { select: { id: true, name: true } },
+      designation: { select: { id: true, name: true } },
+      manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+    },
   });
   if (!employee) {
     throw new ApiError(404, "NOT_FOUND", "Employee profile not found.");
@@ -380,7 +410,12 @@ export async function updateOwnProfile(params: {
     const updated = await tx.employee.update({
       where: { id: params.employeeId },
       data: { phone: params.phone },
-      include: { user: { select: { id: true } } },
+      include: {
+        user: { select: { id: true } },
+        department: { select: { id: true, name: true } },
+        designation: { select: { id: true, name: true } },
+        manager: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
     });
     await writeAudit(tx, {
       companyId: params.companyId,
