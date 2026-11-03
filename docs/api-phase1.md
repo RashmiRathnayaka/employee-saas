@@ -169,7 +169,8 @@ It is written in the same transaction as the event:
 | Final approval | `LEAVE_REQUEST_APPROVED` | the employee (body includes the approver's note, if any) |
 | Rejected at any step | `LEAVE_REQUEST_REJECTED` | the employee (with note) |
 | Revoked | `LEAVE_REQUEST_REVOKED` | the employee (with note) |
-| Cancelled by the employee | `LEAVE_REQUEST_CANCELLED` | the employee (confirmation) |
+| Cancelled by the employee | `LEAVE_REQUEST_CANCELLED` | the approver(s) whose queue it was in at that moment: the manager for `PENDING_MANAGER` (or HR if the manager has no active login), active HR for `PENDING_HR`. Never the employee, since they did it themselves |
+| Cancelled by the system (employee deactivated, which auto-cancels every pending request) | `LEAVE_REQUEST_CANCELLED` | the employee, one per cancelled request, saying why |
 | Sick-leave document reviewed (accepted / rejected / info required) | `LEAVE_DOCUMENT_REVIEWED` | the employee (body includes the HR note) |
 
 In-app only. Email and push notifications are Phase 2.

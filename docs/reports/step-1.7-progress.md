@@ -96,7 +96,33 @@ workspace, but that's unconfirmed. If it happens again, capture the output.
 - [x] Docs: api-phase1.md Notifications (rules + event/recipient table), architecture.md §7
 - [x] Workspace typecheck/lint clean; `pnpm test` run twice in full, all green
       (shared 26, web 18, mobile 21, api 177). The leaveDecisions flake did not reappear.
-- [ ] Stopped for developer review before 1.7c
+- [x] Stopped for developer review. 1.7b was committed and pushed by the developer.
+
+### 1.7b follow-up (developer request, before 1.7c)
+- [x] **Cancel recipients changed.**
+  - Employee cancels → whoever's queue it was in: the manager
+    (`PENDING_MANAGER`, or HR if the manager has no active login) or active
+    HR (`PENDING_HR`). The requester is never included.
+  - System cancel (employee deactivation cascade in `employees.service.ts`)
+    → the employee, one notification per request, saying why.
+  - Submit and cancel now share `findCurrentApproverUserIds()`
+    (`leaveRequests.service.ts`), so both always reach the same people.
+  - Tests: the old "cancelled → employee" test is replaced by 4: manager
+    queue, HR queue after the manager step, HR requester, deactivation
+    cascade with 2 pending requests.
+- [x] **Index `notifications(companyId, userId, createdAt)`**, migration
+      `20261103120000_notifications_user_created_at_index`.
+  - Generated with `prisma migrate diff` between the old and new
+    schema.prisma, **not** `prisma migrate dev`. Earlier migrations contain
+    hand-written SQL that isn't in the Prisma schema
+    (`departments_companyId_lower_name_key` etc., and CHECK constraints), so
+    a DB-vs-schema diff could have tried to drop it. The schema-vs-schema
+    diff was exactly one `CREATE INDEX`.
+  - Applied with `prisma migrate deploy`, which only runs pending migrations
+    and never resets, to dev (`employee_saas`) and test
+    (`employee_saas_test`). Checked in `pg_indexes` on both: the new index
+    exists and `departments_companyId_lower_name_key` is still there.
+- [x] Docs: api-phase1.md cancel rows, database-schema.md index note
 
 ### Test-writing note
 The first version of the event tests failed with 401s. This was the
@@ -106,8 +132,25 @@ total. Users that only receive notifications are now created with
 `createTestUser` and never log in.
 
 ## 1.7c — Notifications UI (web + mobile)
-- [ ] not started
+- [x] Shared: `formatUnreadBadge`, `getNotificationLeaveRequestId` (+ tests)
+- [x] Web:
+  - top-bar bell with badge and dropdown (latest 5), "Mark all as read", "View all"
+  - `/notifications` page with All / Unread tabs and paging
+  - click → mark read → `/leave-requests/:id`
+  - count refreshes on focus and every 60s
+  - no bell for SUPER_ADMIN
+- [x] Mobile:
+  - Home header bell with badge
+  - root-stack `notifications` screen: pull-to-refresh, scroll to load more, mark all
+  - tap → mark read → `/leave/<id>`; Leave stack's `initialRouteName` keeps Back working
+  - count refreshes on app foreground (`useAppStateFocus`) and on Home focus
+- [x] Strings in `strings.ts`; loading, empty and error states; times via shared `formatDateTime` (company timezone)
+- [x] Tests: web +8, mobile +8
+- [x] Mobile Jest exit fix: `jest.setup.ts` gives the shared client a test-only infinite gcTime and clears it after each test. A single file went from 4m40s to about 7s.
+- [x] Typed routes regenerated with a short `expo start` (CI mode), then stopped
+- [x] Workspace typecheck, lint and test (3 full runs, explained in step-1.7.md); `expo export --platform android` run, then `dist/` deleted
 
 ## Finish
-- [ ] docs/reports/step-1.7.md with the real-device checklist
-- [ ] CLAUDE.md status (Phase 1 complete after the device test is confirmed)
+- [x] docs/reports/step-1.7.md with the real-device checklist
+- [x] CLAUDE.md status: "implemented, awaiting device check". Mark Phase 1 complete only after the developer confirms.
+- [x] Real-device test passed (developer, 2026-11-03). Step 1.7 and Phase 1 complete.

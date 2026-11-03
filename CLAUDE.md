@@ -9,7 +9,7 @@ A multi-tenant Employee Management SaaS platform. Many companies share one syste
 
 Full requirements: `docs/proposal.md`. Read it before designing any module.
 
-**Current focus: Phase 1 — Core Employee Management**
+**Phase 1 — Core Employee Management: complete (2026-11-03).** The next phase has not been planned yet.
 (auth + roles, tenant isolation, company setup, departments/designations, employees, leave types/policies/balances/requests/approvals, sick leave documents, in-app notifications, HR + Manager web screens, mobile MVP).
 
 ## Tech stack (pnpm workspaces monorepo)
@@ -120,4 +120,6 @@ pnpm --filter @employee-saas/shared test           # shared helpers (date tests 
 - [x] 1.4 Leave module + sick leave documents
 - [x] 1.5 Web portal (HR, Manager, Company Admin, Super Admin)
 - [x] 1.6 Mobile MVP
-- [ ] 1.7 In-app notifications
+- [x] 1.7 Timezone fixes + in-app notifications (device-tested 2026-11-03)
+
+**Phase 1 complete.**

@@ -282,7 +282,8 @@ erDiagram
   derived from user input (server-generated UUID path), so it can't be used to
   probe other tenants' files.
 - `notifications`: index on `(companyId, userId, readAt)` for the "unread
-  count" query.
+  count" query, and on `(companyId, userId, createdAt)` for the
+  newest-first list (`GET /notifications`).
 - `audit_logs`: index on `(companyId, createdAt)` and on `entityType, entityId`
   for "show me the history of this record."
 
