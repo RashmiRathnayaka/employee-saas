@@ -1,8 +1,7 @@
 import { useNavigate } from "react-router-dom";
-import type { EmployeeDto, LeaveRequestDto, LeaveTypeDto } from "@employee-saas/shared";
+import { formatDate, type EmployeeDto, type LeaveRequestDto, type LeaveTypeDto } from "@employee-saas/shared";
 import { StatusBadge } from "./StatusBadge";
 import { useCompany } from "../lib/companyContext";
-import { formatDate } from "../lib/formatDate";
 
 export function LeaveRequestsTable({
   requests,

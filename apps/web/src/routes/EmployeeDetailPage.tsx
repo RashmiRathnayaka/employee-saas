@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import {
+  formatDate,
   UpdateEmployeeRequestSchema,
   type EmployeeDto,
   type LeaveBalanceDto,
@@ -28,7 +29,6 @@ import { api } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
 import { useCompany } from "../lib/companyContext";
 import { useDepartments, useDesignations, useManagerOptions } from "../lib/queries";
-import { formatDate } from "../lib/formatDate";
 import { getErrorMessage } from "../lib/errorMapping";
 import { useToast } from "../lib/toast";
 import { strings } from "../strings";
