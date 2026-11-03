@@ -26,7 +26,7 @@ interrupted session can pick up from here.
       integration tests failed 4/8, then passed again after restoring the fix.
 - [x] Workspace typecheck, lint and test run; `expo export --platform android` run, then dist/ deleted
 - [x] docs/architecture.md §8 "Dates and timezones" added; CLAUDE.md commands updated
-- [ ] **Stopped here for developer review before 1.7b**
+- [x] Stopped for developer review. 1.7a was committed and pushed by the developer.
 
 ### Findings
 
@@ -64,7 +64,46 @@ path only). My best guess is a timeout from parallel load across the
 workspace, but that's unconfirmed. If it happens again, capture the output.
 
 ## 1.7b — Notifications API
-- [ ] not started
+- [x] Shared contract: `packages/shared/src/notifications.ts`, with
+      `NOTIFICATION_TYPES`, `NotificationSchema`, `NotificationListQuerySchema`
+      (`unreadOnly` takes the literal "true"/"false"), and the unread-count
+      and read-all response schemas
+- [x] `apps/api/src/modules/notifications/` routes + service + test, registered in `app.ts`
+  - `GET /notifications`: own only, newest first (ties broken by `id`), paginated, `unreadOnly`
+  - `GET /notifications/unread-count`
+  - `PATCH /notifications/read-all`, registered before `/:id/read`
+  - `PATCH /notifications/:id/read`: idempotent (`updateMany ... readAt: null`, so the first `readAt` is kept)
+  - Another user's or another company's row → 404
+- [x] Event audit. Gaps found and fixed:
+  1. **Cancel wrote no notification.** It now writes `LEAVE_REQUEST_CANCELLED` to the employee.
+  2. **Document review didn't include the HR note**, and linked to
+     `LeaveRequestDocument` + document id. No app screen opens a document on
+     its own, so it now links to `LeaveRequest` + the request id. The title
+     differs per status.
+  3. **The MANAGER → HR hand-off reused the type `LEAVE_REQUEST_SUBMITTED`**
+     with a generic body. It now has its own type,
+     `LEAVE_REQUEST_PENDING_HR`, and the body names the employee and dates.
+  4. **A manager with no login, or a deactivated one, meant nobody was notified.**
+     The request now goes to HR instead.
+  5. **An HR user with no manager was notified to approve their own request**,
+     which they can't do. The requester is now always excluded.
+  6. Approve/reject/revoke bodies now include the dates and the decision note.
+- [x] `lib/notifications.ts`: typed `type` / `relatedEntityType`, plus helpers
+      `findActiveHrUserIds`, `notifyUsers`, `leaveRangeText`, `withNote`
+- [x] Tests: 18 in `notifications.test.ts`. Each event test checks the
+      complete set of rows created: the expected user(s) and nobody else.
+- [x] Mutation check: without the `userId` filter, 3 own-only tests fail. Restored afterwards.
+- [x] Docs: api-phase1.md Notifications (rules + event/recipient table), architecture.md §7
+- [x] Workspace typecheck/lint clean; `pnpm test` run twice in full, all green
+      (shared 26, web 18, mobile 21, api 177). The leaveDecisions flake did not reappear.
+- [ ] Stopped for developer review before 1.7c
+
+### Test-writing note
+The first version of the event tests failed with 401s. This was the
+**login rate limit** (10 per company code per 15 min), not a bug in the
+API: `createEmployeeWithLogin` uses 2 logins, and the setup made 11 in
+total. Users that only receive notifications are now created with
+`createTestUser` and never log in.
 
 ## 1.7c — Notifications UI (web + mobile)
 - [ ] not started

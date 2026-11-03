@@ -290,10 +290,22 @@ signature on the download token.
 
 ## 7. Notifications (Phase 1 scope: in-app only)
 
-An `notifications` table, company- and user-scoped, written whenever a
-relevant event happens (leave submitted → notify manager; leave
-approved/rejected → notify employee). The web/mobile clients poll
-`GET /api/v1/notifications` via TanStack Query. Push/email are Phase 2+.
+A `notifications` table, scoped to a company and a user. A row is written
+in the same transaction as the event it reports, through
+`apps/api/src/lib/notifications.ts` (`createNotification`, plus
+`findActiveHrUserIds` / `notifyUsers` for "notify HR"). A rolled-back
+decision therefore never leaves a notification behind. The full event →
+recipient table is in `docs/api-phase1.md` (Notifications). Rules:
+
+- Notifications go to whoever must act next (the manager, or HR), and to
+  the employee for outcomes.
+- The requester is never told that their own request awaits their approval.
+- If a manager has no active login, the request is sent to HR so it isn't
+  stuck unseen. HR can decide at the MANAGER step as a fallback (§3).
+
+The web/mobile clients poll `GET /api/v1/notifications/unread-count` and
+`GET /api/v1/notifications` through TanStack Query. There are no websockets
+in Phase 1; push and email come in Phase 2+.
 
 ## 8. Dates and timezones
 

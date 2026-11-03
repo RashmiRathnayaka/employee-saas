@@ -145,10 +145,34 @@ discover it immediately after logging in).
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| GET | `/notifications` | any | List own notifications (paginated, newest first) |
-| GET | `/notifications/unread-count` | any | Count of unread notifications |
-| PATCH | `/notifications/:id/read` | any (own only) | Mark one notification read |
-| PATCH | `/notifications/read-all` | any | Mark all own notifications read |
+| GET | `/notifications` | any | List own notifications (paginated, newest first; optional `unreadOnly=true`) |
+| GET | `/notifications/unread-count` | any | Count of own unread notifications → `{ count }` |
+| PATCH | `/notifications/:id/read` | any (own only) | Mark one notification read → `{ notification }`. Idempotent: repeating it returns 200 and keeps the first `readAt` |
+| PATCH | `/notifications/read-all` | any | Mark all own unread notifications read → `{ updated }` (number of rows changed) |
+
+"Any" means any company user. SUPER_ADMIN has no company and gets 403.
+Every query is filtered by the caller's `userId` as well as the tenant's
+`companyId`, both taken from the token. Another user's notification, or
+another company's, returns **404** (never 403). Schemas:
+`NotificationSchema`, `NotificationListQuerySchema` in `packages/shared`.
+
+Each row has `type`, `title`, `body`, `relatedEntityType` +
+`relatedEntityId` (always `LeaveRequest` + the request id in Phase 1, so
+the apps open the leave request detail screen), `readAt` and `createdAt`.
+It is written in the same transaction as the event:
+
+| Event | `type` | Recipient(s) |
+|---|---|---|
+| Leave submitted, employee has a manager with an active login | `LEAVE_REQUEST_SUBMITTED` | the manager |
+| Leave submitted, no manager (PENDING_HR), or the manager has no active login | `LEAVE_REQUEST_SUBMITTED` | every active HR user, except the requester |
+| MANAGER step approved under `MANAGER_THEN_HR` | `LEAVE_REQUEST_PENDING_HR` | every active HR user, except the requester |
+| Final approval | `LEAVE_REQUEST_APPROVED` | the employee (body includes the approver's note, if any) |
+| Rejected at any step | `LEAVE_REQUEST_REJECTED` | the employee (with note) |
+| Revoked | `LEAVE_REQUEST_REVOKED` | the employee (with note) |
+| Cancelled by the employee | `LEAVE_REQUEST_CANCELLED` | the employee (confirmation) |
+| Sick-leave document reviewed (accepted / rejected / info required) | `LEAVE_DOCUMENT_REVIEWED` | the employee (body includes the HR note) |
+
+In-app only. Email and push notifications are Phase 2.
 
 ## Dashboard
 
