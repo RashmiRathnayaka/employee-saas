@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@employee-saas/shared": "workspace:*",
+    "@expo/vector-icons": "^15.1.1",
     "@hookform/resolvers": "^5.9.2",
     "@react-native-community/datetimepicker": "9.2.1",
     "@tanstack/react-query": "^5.105.0",
@@ -53,6 +54,9 @@
     ],
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
-    }
+    },
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.ts"
+    ]
   }
 }

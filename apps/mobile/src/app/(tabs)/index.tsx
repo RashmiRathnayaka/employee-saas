@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { DEFAULT_TIMEZONE, formatDate, todayInTimezone } from "@employee-saas/shared";
 import { Screen } from "../../components/ui/Screen";
@@ -8,6 +9,7 @@ import { ErrorView, LoadingView } from "../../components/ui/StateViews";
 import { useAuth } from "../../lib/authContext";
 import { useCompany } from "../../lib/theme";
 import { useEmployeeMe, useLeaveBalances, useLeaveRequests, useLeaveTypes } from "../../lib/queries";
+import { useUnreadNotificationCount } from "../../lib/notifications";
 import { strings } from "../../strings";
 
 export default function HomeScreen() {
@@ -17,6 +19,17 @@ export default function HomeScreen() {
   const balancesQuery = useLeaveBalances();
   const leaveTypesQuery = useLeaveTypes();
   const requestsQuery = useLeaveRequests(1, 100);
+  const unreadCountQuery = useUnreadNotificationCount();
+  const { refetch: refetchUnreadCount } = unreadCountQuery;
+
+  // Coming back to Home (e.g. from the notifications screen or another tab)
+  // refreshes the bell's badge.
+  useFocusEffect(
+    useCallback(() => {
+      void refetchUnreadCount();
+    }, [refetchUnreadCount]),
+  );
+
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = useCallback(async () => {
@@ -26,6 +39,7 @@ export default function HomeScreen() {
       balancesQuery.refetch(),
       leaveTypesQuery.refetch(),
       requestsQuery.refetch(),
+      refetchUnreadCount(),
     ]);
     setRefreshing(false);
   }, [employeeQuery, balancesQuery, leaveTypesQuery, requestsQuery]);

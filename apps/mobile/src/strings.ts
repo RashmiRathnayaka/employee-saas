@@ -41,6 +41,15 @@ export const strings = {
     message: "This app is for employees. Please use the web portal instead.",
     logout: "Log out",
   },
+  notifications: {
+    title: "Notifications",
+    bellLabel: "Notifications",
+    bellLabelUnread: (count: number) => `Notifications, ${count} unread`,
+    markAllRead: "Mark all as read",
+    empty: "No notifications yet",
+    unread: "unread",
+    loadError: "Couldn't load notifications.",
+  },
   tabs: {
     home: "Home",
     leave: "Leave",
