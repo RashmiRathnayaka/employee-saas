@@ -7,6 +7,7 @@ import { generateTempPassword } from "../../lib/tempPassword.js";
 import { hashPassword } from "../../lib/passwordHashing.js";
 import { lockOrCreateBalance } from "../leaveRequests/leaveRequests.service.js";
 import { getCompanyCurrentYear } from "../../lib/companyTime.js";
+import { createNotification, leaveRangeText } from "../../lib/notifications.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
 
@@ -364,6 +365,20 @@ export async function updateEmployeeStatus(params: {
           data: { pendingDays: { decrement: pending.totalDays } },
         });
         await tx.leaveRequest.update({ where: { id: pending.id }, data: { status: "CANCELLED" } });
+        // The system cancelled it, not the employee, so tell them why. (Their
+        // login is deactivated in this same transaction - they'll see it if
+        // the profile is reactivated.)
+        if (linkedUser) {
+          await createNotification(tx, {
+            companyId: params.companyId,
+            userId: linkedUser.id,
+            type: "LEAVE_REQUEST_CANCELLED",
+            title: "Your pending leave request was cancelled",
+            body: `Your ${pending.totalDays}-day leave request (${leaveRangeText(pending.startDate, pending.endDate)}) was cancelled automatically because your employee profile was deactivated.`,
+            relatedEntityType: "LeaveRequest",
+            relatedEntityId: pending.id,
+          });
+        }
         await writeAudit(tx, {
           companyId: params.companyId,
           actorUserId: params.actorUserId,

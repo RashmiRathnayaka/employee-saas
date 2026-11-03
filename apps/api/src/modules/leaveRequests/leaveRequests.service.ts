@@ -4,7 +4,7 @@ import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
-import { createNotification, findActiveHrUserIds, leaveRangeText, notifyUsers } from "../../lib/notifications.js";
+import { findActiveHrUserIds, leaveRangeText, notifyUsers } from "../../lib/notifications.js";
 import { calculateLeaveDays, normalizeWorkingDays } from "../../lib/leaveDays.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
@@ -60,11 +60,35 @@ async function lockOrCreateBalance(
   });
 }
 
-/** Notifies whoever must act on a newly submitted request: the employee's
- * manager, or HR when the request went straight to PENDING_HR (no
- * manager) - and also HR when the manager has no active login, since
- * nobody would see it otherwise and HR can decide at the MANAGER step as a
- * fallback (docs/architecture.md §3). Never notifies the requester. */
+/**
+ * The user(s) whose approval queue a pending request is in right now:
+ * - PENDING_MANAGER -> the employee's manager, if they have an active
+ *   login; otherwise HR (nobody would see it, and HR can decide at the
+ *   MANAGER step as a fallback - docs/architecture.md §3).
+ * - PENDING_HR -> every active HR user.
+ * The requester themselves is always excluded (no self-approval).
+ * Used for "submitted" and for "the employee cancelled it", so both go to
+ * the same people.
+ */
+export async function findCurrentApproverUserIds(
+  tx: Tx,
+  params: {
+    companyId: string;
+    status: "PENDING_MANAGER" | "PENDING_HR";
+    managerId: string | null;
+    requesterUserId: string | null;
+  },
+): Promise<{ approver: "MANAGER" | "HR"; userIds: string[] }> {
+  if (params.status === "PENDING_MANAGER" && params.managerId) {
+    const manager = await tx.employee.findUnique({ where: { id: params.managerId }, include: { user: true } });
+    if (manager?.user && manager.user.status === "ACTIVE" && manager.user.id !== params.requesterUserId) {
+      return { approver: "MANAGER", userIds: [manager.user.id] };
+    }
+  }
+  const userIds = await findActiveHrUserIds(tx, { companyId: params.companyId, excludeUserId: params.requesterUserId });
+  return { approver: "HR", userIds };
+}
+
 async function notifyApprovers(
   tx: Tx,
   params: {
@@ -75,34 +99,23 @@ async function notifyApprovers(
     totalDays: number;
     startDate: Date;
     endDate: Date;
-    routedToHr: boolean;
+    status: "PENDING_MANAGER" | "PENDING_HR";
   },
 ) {
-  const body = `${params.employee.firstName} ${params.employee.lastName} requested ${params.totalDays} day(s) of leave (${leaveRangeText(params.startDate, params.endDate)}).`;
-  const related = { relatedEntityType: "LeaveRequest" as const, relatedEntityId: params.leaveRequestId };
+  const { approver, userIds } = await findCurrentApproverUserIds(tx, {
+    companyId: params.companyId,
+    status: params.status,
+    managerId: params.employee.managerId,
+    requesterUserId: params.requesterUserId,
+  });
 
-  if (!params.routedToHr && params.employee.managerId) {
-    const manager = await tx.employee.findUnique({ where: { id: params.employee.managerId }, include: { user: true } });
-    if (manager?.user && manager.user.status === "ACTIVE" && manager.user.id !== params.requesterUserId) {
-      await createNotification(tx, {
-        companyId: params.companyId,
-        userId: manager.user.id,
-        type: "LEAVE_REQUEST_SUBMITTED",
-        title: "New leave request awaiting your approval",
-        body,
-        ...related,
-      });
-      return;
-    }
-  }
-
-  const hrUserIds = await findActiveHrUserIds(tx, { companyId: params.companyId, excludeUserId: params.requesterUserId });
-  await notifyUsers(tx, hrUserIds, {
+  await notifyUsers(tx, userIds, {
     companyId: params.companyId,
     type: "LEAVE_REQUEST_SUBMITTED",
-    title: "New leave request awaiting HR approval",
-    body,
-    ...related,
+    title: approver === "MANAGER" ? "New leave request awaiting your approval" : "New leave request awaiting HR approval",
+    body: `${params.employee.firstName} ${params.employee.lastName} requested ${params.totalDays} day(s) of leave (${leaveRangeText(params.startDate, params.endDate)}).`,
+    relatedEntityType: "LeaveRequest",
+    relatedEntityId: params.leaveRequestId,
   });
 }
 
@@ -276,7 +289,7 @@ export async function submitLeaveRequest(params: {
       totalDays,
       startDate,
       endDate,
-      routedToHr,
+      status: initialStatus,
     });
 
     await writeAudit(tx, {

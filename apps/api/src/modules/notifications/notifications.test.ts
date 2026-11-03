@@ -369,7 +369,7 @@ describe("events write the right notification for the right user", () => {
     expect(rows[0]!.body).toContain('Note: "Project deadline"');
   });
 
-  it("cancelled -> the employee only", async () => {
+  it("employee cancels at PENDING_MANAGER -> the manager only, not the employee", async () => {
     const app = createApp();
     const c = await setUpLeaveCompany(app);
     const requestId = await submitLeave(app, c.employee.token, c.annualId);
@@ -380,7 +380,63 @@ describe("events write the right notification for the right user", () => {
 
     const rows = await notificationsIn(c.companyId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ userId: c.employee.userId, type: "LEAVE_REQUEST_CANCELLED", relatedEntityId: requestId });
+    expect(rows[0]).toMatchObject({
+      userId: c.manager.userId,
+      type: "LEAVE_REQUEST_CANCELLED",
+      title: "Leave request cancelled",
+      relatedEntityType: "LeaveRequest",
+      relatedEntityId: requestId,
+    });
+    expect(rows[0]!.body).toContain("Emp Test cancelled their 5-day leave request");
+  });
+
+  it("employee cancels at PENDING_HR (after the manager step) -> active HR only, not the manager or employee", async () => {
+    const app = createApp();
+    const c = await setUpLeaveCompany(app);
+    await request(app).patch("/api/v1/company/settings").set("Authorization", c.admin.token).send({ leaveApprovalWorkflow: "MANAGER_THEN_HR" });
+    const requestId = await submitLeave(app, c.employee.token, c.annualId);
+    await request(app).patch(`/api/v1/leave-requests/${requestId}/approve`).set("Authorization", c.manager.token).send({});
+    await clearNotifications(c.companyId);
+
+    const cancel = await request(app).patch(`/api/v1/leave-requests/${requestId}/cancel`).set("Authorization", c.employee.token).send({});
+    expect(cancel.status).toBe(200);
+
+    const rows = await notificationsIn(c.companyId);
+    expect(rows.map((r) => r.userId).sort()).toEqual([c.hr1.userId, c.hr2.userId].sort());
+    expect(rows.every((r) => r.type === "LEAVE_REQUEST_CANCELLED" && r.relatedEntityId === requestId)).toBe(true);
+  });
+
+  it("HR user cancels their own PENDING_HR request -> the other HR users, never themselves", async () => {
+    const app = createApp();
+    const c = await setUpLeaveCompany(app);
+    const requestId = await submitLeave(app, c.hr1.token, c.annualId); // hr1 has no manager -> PENDING_HR
+    await clearNotifications(c.companyId);
+
+    await request(app).patch(`/api/v1/leave-requests/${requestId}/cancel`).set("Authorization", c.hr1.token).send({});
+
+    const rows = await notificationsIn(c.companyId);
+    expect(rows.map((r) => r.userId)).toEqual([c.hr2.userId]);
+  });
+
+  it("system cancels (employee deactivated) -> the employee only, once per pending request", async () => {
+    const app = createApp();
+    const c = await setUpLeaveCompany(app);
+    const first = await submitLeave(app, c.employee.token, c.annualId, "2026-03-02", "2026-03-03");
+    const second = await submitLeave(app, c.employee.token, c.annualId, "2026-04-06", "2026-04-06");
+    await clearNotifications(c.companyId);
+
+    const deactivate = await request(app)
+      .patch(`/api/v1/employees/${c.employee.employee.id}/status`)
+      .set("Authorization", c.admin.token)
+      .send({ status: "INACTIVE" });
+    expect(deactivate.status).toBe(200);
+
+    const rows = await notificationsIn(c.companyId);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.userId === c.employee.userId && r.type === "LEAVE_REQUEST_CANCELLED")).toBe(true);
+    expect(rows.map((r) => r.relatedEntityId).sort()).toEqual([first, second].sort());
+    expect(rows[0]!.title).toBe("Your pending leave request was cancelled");
+    expect(rows[0]!.body).toContain("because your employee profile was deactivated");
   });
 
   it.each([

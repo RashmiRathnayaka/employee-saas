@@ -9,7 +9,7 @@ export const NOTIFICATION_TYPES = [
   "LEAVE_REQUEST_APPROVED", // -> employee
   "LEAVE_REQUEST_REJECTED", // -> employee
   "LEAVE_REQUEST_REVOKED", // -> employee
-  "LEAVE_REQUEST_CANCELLED", // -> employee
+  "LEAVE_REQUEST_CANCELLED", // employee cancelled -> current approver(s); system cancelled (deactivation) -> employee
   "LEAVE_DOCUMENT_REVIEWED", // -> employee (includes the HR note)
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
@@ -49,3 +49,16 @@ export type UnreadCountResponse = z.infer<typeof UnreadCountResponseSchema>;
 
 export const MarkAllReadResponseSchema = z.object({ updated: z.number().int().min(0) });
 export type MarkAllReadResponse = z.infer<typeof MarkAllReadResponseSchema>;
+
+/** Badge text for an unread count: "" when there's nothing unread (hide
+ * the badge), the number up to 9, then "9+". */
+export function formatUnreadBadge(count: number): string {
+  if (count <= 0) return "";
+  return count > 9 ? "9+" : String(count);
+}
+
+/** The leave request a notification should open, or null when it doesn't
+ * point at one (the apps then just mark it read and stay put). */
+export function getNotificationLeaveRequestId(n: Pick<NotificationDto, "relatedEntityType" | "relatedEntityId">): string | null {
+  return n.relatedEntityType === "LeaveRequest" && n.relatedEntityId ? n.relatedEntityId : null;
+}

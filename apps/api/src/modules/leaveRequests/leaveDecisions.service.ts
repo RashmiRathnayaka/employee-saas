@@ -6,7 +6,7 @@ import { writeAudit } from "../../lib/audit.js";
 import { createNotification, findActiveHrUserIds, leaveRangeText, notifyUsers, withNote } from "../../lib/notifications.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { companyTodayAsUtcDate } from "../../lib/companyTime.js";
-import { lockOrCreateBalance } from "./leaveRequests.service.js";
+import { findCurrentApproverUserIds, lockOrCreateBalance } from "./leaveRequests.service.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
 
@@ -171,7 +171,10 @@ export async function cancelLeaveRequest(params: {
   leaveRequestId: string;
 }) {
   const tenant: Tenant = getTenantPrisma(params.companyId);
-  const leaveRequest = await tenant.leaveRequest.findUnique({ where: { id: params.leaveRequestId } });
+  const leaveRequest = await tenant.leaveRequest.findUnique({
+    where: { id: params.leaveRequestId },
+    include: { employee: true },
+  });
   if (!leaveRequest || leaveRequest.employeeId !== params.employeeId) {
     throw new ApiError(404, "NOT_FOUND", "Leave request not found.");
   }
@@ -197,14 +200,21 @@ export async function cancelLeaveRequest(params: {
 
     const updated = await tx.leaveRequest.update({ where: { id: leaveRequest.id }, data: { status: "CANCELLED" } });
 
-    // The actor is the employee themselves (only the owner can cancel), so
-    // this is a confirmation in their own feed.
-    await createNotification(tx, {
+    // The employee cancelled it themselves, so they don't need telling.
+    // Whoever's queue it was in at that moment does - the same people
+    // "submitted" went to (or, under MANAGER_THEN_HR, HR once it reached
+    // PENDING_HR) - so it doesn't just silently vanish from their list.
+    const { userIds } = await findCurrentApproverUserIds(tx, {
       companyId: params.companyId,
-      userId: params.actorUserId,
+      status: leaveRequest.status as "PENDING_MANAGER" | "PENDING_HR",
+      managerId: leaveRequest.employee.managerId,
+      requesterUserId: params.actorUserId,
+    });
+    await notifyUsers(tx, userIds, {
+      companyId: params.companyId,
       type: "LEAVE_REQUEST_CANCELLED",
-      title: "Your leave request was cancelled",
-      body: `Your ${leaveRequest.totalDays}-day leave (${leaveRangeText(leaveRequest.startDate, leaveRequest.endDate)}) was cancelled.`,
+      title: "Leave request cancelled",
+      body: `${leaveRequest.employee.firstName} ${leaveRequest.employee.lastName} cancelled their ${leaveRequest.totalDays}-day leave request (${leaveRangeText(leaveRequest.startDate, leaveRequest.endDate)}). No action is needed.`,
       relatedEntityType: "LeaveRequest",
       relatedEntityId: updated.id,
     });

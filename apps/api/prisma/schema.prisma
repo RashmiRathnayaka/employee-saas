@@ -300,6 +300,8 @@ model Notification {
   createdAt         DateTime  @default(now())
 
   @@index([companyId, userId, readAt])
+  // GET /notifications: one user's rows, newest first.
+  @@index([companyId, userId, createdAt])
   @@map("notifications")
 }
 
