@@ -4,7 +4,19 @@ import type { Role } from "@employee-saas/shared";
 import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
-import { createNotification } from "../../lib/notifications.js";
+import { createNotification, withNote } from "../../lib/notifications.js";
+
+const REVIEW_TITLES = {
+  ACCEPTED: "Your sick leave document was accepted",
+  REJECTED: "Your sick leave document was rejected",
+  INFO_REQUIRED: "More information needed for your sick leave document",
+} as const;
+
+const REVIEW_BODIES = {
+  ACCEPTED: (file: string) => `HR accepted "${file}".`,
+  REJECTED: (file: string) => `HR rejected "${file}". Please upload a new document.`,
+  INFO_REQUIRED: (file: string) => `HR needs more information about "${file}". Please upload another document.`,
+} as const;
 import { getStorageService } from "../../lib/storage/index.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
@@ -172,10 +184,12 @@ export async function reviewDocument(params: {
         companyId: params.companyId,
         userId: leaveRequest.employee.user.id,
         type: "LEAVE_DOCUMENT_REVIEWED",
-        title: "Your sick leave document was reviewed",
-        body: `Your document was marked ${params.status.toLowerCase().replace("_", " ")}.`,
-        relatedEntityType: "LeaveRequestDocument",
-        relatedEntityId: document.id,
+        title: REVIEW_TITLES[params.status],
+        body: withNote(REVIEW_BODIES[params.status](document.filename), params.note, "HR note"),
+        // Points at the leave request (not the document): that's the screen
+        // in both apps that shows the documents and their review status.
+        relatedEntityType: "LeaveRequest",
+        relatedEntityId: leaveRequest.id,
       });
     }
 

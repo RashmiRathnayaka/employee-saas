@@ -4,7 +4,7 @@ import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
-import { createNotification } from "../../lib/notifications.js";
+import { createNotification, findActiveHrUserIds, leaveRangeText, notifyUsers } from "../../lib/notifications.js";
 import { calculateLeaveDays, normalizeWorkingDays } from "../../lib/leaveDays.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
@@ -60,45 +60,50 @@ async function lockOrCreateBalance(
   });
 }
 
+/** Notifies whoever must act on a newly submitted request: the employee's
+ * manager, or HR when the request went straight to PENDING_HR (no
+ * manager) - and also HR when the manager has no active login, since
+ * nobody would see it otherwise and HR can decide at the MANAGER step as a
+ * fallback (docs/architecture.md §3). Never notifies the requester. */
 async function notifyApprovers(
   tx: Tx,
-  params: { companyId: string; employee: { id: string; firstName: string; lastName: string; managerId: string | null }; leaveRequestId: string; totalDays: number; routedToHr: boolean },
+  params: {
+    companyId: string;
+    requesterUserId: string;
+    employee: { id: string; firstName: string; lastName: string; managerId: string | null };
+    leaveRequestId: string;
+    totalDays: number;
+    startDate: Date;
+    endDate: Date;
+    routedToHr: boolean;
+  },
 ) {
-  const body = `${params.employee.firstName} ${params.employee.lastName} requested ${params.totalDays} day(s) of leave.`;
+  const body = `${params.employee.firstName} ${params.employee.lastName} requested ${params.totalDays} day(s) of leave (${leaveRangeText(params.startDate, params.endDate)}).`;
+  const related = { relatedEntityType: "LeaveRequest" as const, relatedEntityId: params.leaveRequestId };
 
   if (!params.routedToHr && params.employee.managerId) {
     const manager = await tx.employee.findUnique({ where: { id: params.employee.managerId }, include: { user: true } });
-    if (manager?.user) {
+    if (manager?.user && manager.user.status === "ACTIVE" && manager.user.id !== params.requesterUserId) {
       await createNotification(tx, {
         companyId: params.companyId,
         userId: manager.user.id,
         type: "LEAVE_REQUEST_SUBMITTED",
         title: "New leave request awaiting your approval",
         body,
-        relatedEntityType: "LeaveRequest",
-        relatedEntityId: params.leaveRequestId,
+        ...related,
       });
+      return;
     }
-    return;
   }
 
-  const hrUsers: { id: string }[] = await tx.user.findMany({
-    where: { companyId: params.companyId, role: "HR", status: "ACTIVE" },
-    select: { id: true },
+  const hrUserIds = await findActiveHrUserIds(tx, { companyId: params.companyId, excludeUserId: params.requesterUserId });
+  await notifyUsers(tx, hrUserIds, {
+    companyId: params.companyId,
+    type: "LEAVE_REQUEST_SUBMITTED",
+    title: "New leave request awaiting HR approval",
+    body,
+    ...related,
   });
-  await Promise.all(
-    hrUsers.map((hr) =>
-      createNotification(tx, {
-        companyId: params.companyId,
-        userId: hr.id,
-        type: "LEAVE_REQUEST_SUBMITTED",
-        title: "New leave request awaiting HR approval",
-        body,
-        relatedEntityType: "LeaveRequest",
-        relatedEntityId: params.leaveRequestId,
-      }),
-    ),
-  );
 }
 
 /** Computes totalDays for a candidate date range without creating anything
@@ -265,9 +270,12 @@ export async function submitLeaveRequest(params: {
 
     await notifyApprovers(tx, {
       companyId: params.companyId,
+      requesterUserId: params.actorUserId,
       employee,
       leaveRequestId: created.id,
       totalDays,
+      startDate,
+      endDate,
       routedToHr,
     });
 

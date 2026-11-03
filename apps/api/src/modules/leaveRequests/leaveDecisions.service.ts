@@ -3,7 +3,7 @@ import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
-import { createNotification } from "../../lib/notifications.js";
+import { createNotification, findActiveHrUserIds, leaveRangeText, notifyUsers, withNote } from "../../lib/notifications.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { companyTodayAsUtcDate } from "../../lib/companyTime.js";
 import { lockOrCreateBalance } from "./leaveRequests.service.js";
@@ -116,31 +116,31 @@ export async function decideLeaveRequest(params: {
 
     const updated = await tx.leaveRequest.update({ where: { id: leaveRequest.id }, data: { status: newStatus } });
 
+    const range = leaveRangeText(leaveRequest.startDate, leaveRequest.endDate);
+    const employeeName = `${leaveRequest.employee.firstName} ${leaveRequest.employee.lastName}`;
+
     if (newStatus === "PENDING_HR") {
-      const hrUsers: { id: string }[] = await tx.user.findMany({
-        where: { companyId: params.companyId, role: "HR", status: "ACTIVE" },
-        select: { id: true },
+      // MANAGER step approved under MANAGER_THEN_HR -> HR is now the approver.
+      const hrUserIds = await findActiveHrUserIds(tx, {
+        companyId: params.companyId,
+        excludeUserId: leaveRequest.employee.user?.id,
       });
-      await Promise.all(
-        hrUsers.map((hr) =>
-          createNotification(tx, {
-            companyId: params.companyId,
-            userId: hr.id,
-            type: "LEAVE_REQUEST_SUBMITTED",
-            title: "Leave request awaiting HR approval",
-            body: "A manager-approved leave request now needs HR review.",
-            relatedEntityType: "LeaveRequest",
-            relatedEntityId: updated.id,
-          }),
-        ),
-      );
+      await notifyUsers(tx, hrUserIds, {
+        companyId: params.companyId,
+        type: "LEAVE_REQUEST_PENDING_HR",
+        title: "Leave request awaiting HR approval",
+        body: `${employeeName}'s ${leaveRequest.totalDays}-day leave (${range}) was approved by their manager and now needs HR approval.`,
+        relatedEntityType: "LeaveRequest",
+        relatedEntityId: updated.id,
+      });
     } else if (leaveRequest.employee.user) {
+      const approved = newStatus === "APPROVED";
       await createNotification(tx, {
         companyId: params.companyId,
         userId: leaveRequest.employee.user.id,
-        type: newStatus === "APPROVED" ? "LEAVE_REQUEST_APPROVED" : "LEAVE_REQUEST_REJECTED",
-        title: newStatus === "APPROVED" ? "Your leave request was approved" : "Your leave request was rejected",
-        body: `Your ${leaveRequest.totalDays}-day leave request is now ${newStatus.toLowerCase()}.`,
+        type: approved ? "LEAVE_REQUEST_APPROVED" : "LEAVE_REQUEST_REJECTED",
+        title: approved ? "Your leave request was approved" : "Your leave request was rejected",
+        body: withNote(`Your ${leaveRequest.totalDays}-day leave (${range}) was ${approved ? "approved" : "rejected"}.`, params.note),
         relatedEntityType: "LeaveRequest",
         relatedEntityId: updated.id,
       });
@@ -196,6 +196,18 @@ export async function cancelLeaveRequest(params: {
     });
 
     const updated = await tx.leaveRequest.update({ where: { id: leaveRequest.id }, data: { status: "CANCELLED" } });
+
+    // The actor is the employee themselves (only the owner can cancel), so
+    // this is a confirmation in their own feed.
+    await createNotification(tx, {
+      companyId: params.companyId,
+      userId: params.actorUserId,
+      type: "LEAVE_REQUEST_CANCELLED",
+      title: "Your leave request was cancelled",
+      body: `Your ${leaveRequest.totalDays}-day leave (${leaveRangeText(leaveRequest.startDate, leaveRequest.endDate)}) was cancelled.`,
+      relatedEntityType: "LeaveRequest",
+      relatedEntityId: updated.id,
+    });
 
     await writeAudit(tx, {
       companyId: params.companyId,
@@ -266,7 +278,10 @@ export async function revokeLeaveRequest(params: {
         userId: leaveRequest.employee.user.id,
         type: "LEAVE_REQUEST_REVOKED",
         title: "Your approved leave was revoked",
-        body: `Your ${leaveRequest.totalDays}-day leave request has been revoked.`,
+        body: withNote(
+          `Your ${leaveRequest.totalDays}-day leave (${leaveRangeText(leaveRequest.startDate, leaveRequest.endDate)}) was revoked.`,
+          params.note,
+        ),
         relatedEntityType: "LeaveRequest",
         relatedEntityId: updated.id,
       });
