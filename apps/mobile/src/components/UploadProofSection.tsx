@@ -2,11 +2,11 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { File } from "expo-file-system";
 import * as WebBrowser from "expo-web-browser";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { LeaveRequestDto } from "@employee-saas/shared";
+import { formatDate, type LeaveRequestDto } from "@employee-saas/shared";
 import { Button } from "./ui/Button";
 import { api, getApiOrigin } from "../lib/apiClient";
 import { getErrorMessage } from "../lib/errorMapping";
-import { formatDate } from "../lib/formatDate";
+import { useCompanyTimezone } from "../lib/theme";
 import { validateProofFile } from "../lib/fileValidation";
 import { useLeaveDocuments } from "../lib/queries";
 import {
@@ -24,6 +24,7 @@ const UPLOADABLE_STATUSES: ProofStatus[] = ["MISSING", "INFO_REQUIRED", "REJECTE
 
 export function UploadProofSection({ requestId, proofStatus }: { requestId: string; proofStatus: ProofStatus }) {
   const queryClient = useQueryClient();
+  const timezone = useCompanyTimezone();
   const documentsQuery = useLeaveDocuments(requestId);
 
   const uploadMutation = useMutation({
@@ -101,7 +102,7 @@ export function UploadProofSection({ requestId, proofStatus }: { requestId: stri
         documents.map((doc) => (
           <Pressable key={doc.id} onPress={() => openDocument(doc.id)} style={styles.docRow}>
             <Text style={styles.docName}>{doc.filename}</Text>
-            <Text style={styles.muted}>{formatDate(doc.uploadedAt)}</Text>
+            <Text style={styles.muted}>{formatDate(doc.uploadedAt, timezone)}</Text>
             <Text style={styles.docStatus}>{strings.documentStatus[doc.status]}</Text>
             {doc.reviewNote ? (
               <Text style={styles.muted}>

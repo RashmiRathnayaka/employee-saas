@@ -5,17 +5,22 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { CreateLeaveRequestSchema, type LeaveRequestDto } from "@employee-saas/shared";
+import {
+  addDaysToIsoDate,
+  CreateLeaveRequestSchema,
+  isoDateToLocalDate,
+  todayInTimezone,
+  type LeaveRequestDto,
+} from "@employee-saas/shared";
 import { Screen } from "../../../components/ui/Screen";
 import { Button } from "../../../components/ui/Button";
 import { DateField } from "../../../components/ui/DateField";
 import { TextField } from "../../../components/ui/TextField";
 import { useLeaveTypes } from "../../../lib/queries";
-import { usePrimaryColor } from "../../../lib/theme";
+import { useCompanyTimezone, usePrimaryColor } from "../../../lib/theme";
 import { api } from "../../../lib/apiClient";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import { applyApiErrorToForm, getErrorMessage } from "../../../lib/errorMapping";
-import { addDaysToIsoDate, todayLocalIsoDate } from "../../../lib/formatDate";
 import { strings } from "../../../strings";
 
 // z.input, not z.infer - CreateLeaveRequestSchema's `.default(...)` fields
@@ -30,14 +35,18 @@ type CreateLeaveRequestFormValues = z.input<typeof CreateLeaveRequestSchema>;
 // instead of letting the server reject it after the fact.
 const PAST_DATE_WINDOW_DAYS = 30;
 
-function minimumStartDate(allowPastDates: boolean | undefined): Date {
-  const isoBound = allowPastDates ? addDaysToIsoDate(todayLocalIsoDate(), -PAST_DATE_WINDOW_DAYS) : todayLocalIsoDate();
-  return new Date(`${isoBound}T00:00:00`);
+// "Today" is the company's today (companies.timezone) - the same day the
+// API checks against - not whatever timezone the phone happens to be set to.
+function minimumStartDate(allowPastDates: boolean | undefined, timezone: string): Date {
+  const today = todayInTimezone(timezone);
+  const isoBound = allowPastDates ? addDaysToIsoDate(today, -PAST_DATE_WINDOW_DAYS) : today;
+  return isoDateToLocalDate(isoBound);
 }
 
 export default function ApplyLeaveScreen() {
   const leaveTypesQuery = useLeaveTypes();
   const primaryColor = usePrimaryColor();
+  const timezone = useCompanyTimezone();
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<{ totalDays: number } | { error: string } | null>(null);
 
@@ -201,7 +210,7 @@ export default function ApplyLeaveScreen() {
               label={strings.applyLeave.startDate}
               value={field.value ?? ""}
               onChange={field.onChange}
-              minimumDate={minimumStartDate(selectedLeaveType?.allowPastDates)}
+              minimumDate={minimumStartDate(selectedLeaveType?.allowPastDates, timezone)}
               error={errors.startDate?.message}
             />
           )}

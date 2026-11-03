@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { DEFAULT_TIMEZONE, formatDate, todayInTimezone } from "@employee-saas/shared";
 import { Screen } from "../../components/ui/Screen";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
@@ -7,12 +8,7 @@ import { ErrorView, LoadingView } from "../../components/ui/StateViews";
 import { useAuth } from "../../lib/authContext";
 import { useCompany } from "../../lib/theme";
 import { useEmployeeMe, useLeaveBalances, useLeaveRequests, useLeaveTypes } from "../../lib/queries";
-import { formatDate } from "../../lib/formatDate";
 import { strings } from "../../strings";
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export default function HomeScreen() {
   const { logout } = useAuth();
@@ -41,11 +37,11 @@ export default function HomeScreen() {
 
   const nextUpcomingLeave = useMemo(() => {
     const requests = requestsQuery.data?.data ?? [];
-    const today = todayIso();
+    const today = todayInTimezone(company?.timezone ?? DEFAULT_TIMEZONE);
     return requests
       .filter((r) => r.status === "APPROVED" && r.startDate >= today)
       .sort((a, b) => a.startDate.localeCompare(b.startDate))[0];
-  }, [requestsQuery.data]);
+  }, [requestsQuery.data, company?.timezone]);
 
   const isLoading = employeeQuery.isLoading || balancesQuery.isLoading || requestsQuery.isLoading;
   const isError = employeeQuery.isError || balancesQuery.isError || requestsQuery.isError;

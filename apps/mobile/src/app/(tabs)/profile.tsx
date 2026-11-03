@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { EmployeeDto } from "@employee-saas/shared";
+import { formatDate, type EmployeeDto } from "@employee-saas/shared";
 import { Screen } from "../../components/ui/Screen";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
@@ -10,7 +10,6 @@ import { ErrorView, LoadingView } from "../../components/ui/StateViews";
 import { useEmployeeMe } from "../../lib/queries";
 import { api } from "../../lib/apiClient";
 import { getErrorMessage } from "../../lib/errorMapping";
-import { formatDate } from "../../lib/formatDate";
 import { strings } from "../../strings";
 
 function Field({ label, value }: { label: string; value: string }) {

@@ -4,7 +4,7 @@ import DateTimePicker, {
   DateTimePickerAndroid,
   type DateTimePickerChangeEvent,
 } from "@react-native-community/datetimepicker";
-import { toLocalIsoDate } from "../../lib/formatDate";
+import { isoDateToLocalDate, toLocalIsoDate } from "@employee-saas/shared";
 import { strings } from "../../strings";
 
 type DateFieldProps = {
@@ -20,7 +20,7 @@ export function DateField({ label, value, onChange, minimumDate, error }: DateFi
   // Only read on iOS, which renders the picker inline below. Android never
   // sets this - see openPicker().
   const [show, setShow] = useState(false);
-  const dateValue = value ? new Date(`${value}T00:00:00`) : new Date();
+  const dateValue = value ? isoDateToLocalDate(value) : new Date();
 
   // `onChange` is deprecated in favour of these two, which split what it
   // used to encode in event.type - onValueChange only ever fires with an

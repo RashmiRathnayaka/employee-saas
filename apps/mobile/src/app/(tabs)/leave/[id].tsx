@@ -10,7 +10,8 @@ import { useLeaveRequestDetail, useLeaveTypes } from "../../../lib/queries";
 import { leaveStatusLabel } from "../../../lib/leaveStatusLabel";
 import { api } from "../../../lib/apiClient";
 import { getErrorMessage } from "../../../lib/errorMapping";
-import { formatDate } from "../../../lib/formatDate";
+import { formatDate } from "@employee-saas/shared";
+import { useCompanyTimezone } from "../../../lib/theme";
 import { strings } from "../../../strings";
 
 export default function LeaveDetailScreen() {
@@ -18,6 +19,7 @@ export default function LeaveDetailScreen() {
   const detailQuery = useLeaveRequestDetail(id);
   const leaveTypesQuery = useLeaveTypes();
   const queryClient = useQueryClient();
+  const timezone = useCompanyTimezone();
 
   const cancelMutation = useMutation({
     mutationFn: () => api.patch(`/leave-requests/${id}/cancel`),
@@ -81,7 +83,8 @@ export default function LeaveDetailScreen() {
             <Text style={styles.muted}>{strings.proofStatus[leaveRequest.proofStatus]}</Text>
             {leaveRequest.proofDueAt ? (
               <Text style={styles.muted}>
-                {strings.leaveDetail.proofDueBy}: {formatDate(leaveRequest.proofDueAt)}
+                {strings.leaveDetail.proofDueBy}: {/* proofDueAt is stored as UTC midnight of the due day, so its date part is the calendar due date */}
+                {formatDate(leaveRequest.proofDueAt.slice(0, 10))}
               </Text>
             ) : null}
           </>
@@ -109,7 +112,7 @@ export default function LeaveDetailScreen() {
               <Text style={styles.approvalText}>
                 {approval.step} - {approval.decision}
               </Text>
-              <Text style={styles.muted}>{formatDate(approval.decidedAt)}</Text>
+              <Text style={styles.muted}>{formatDate(approval.decidedAt, timezone)}</Text>
               {approval.note ? <Text style={styles.approvalNote}>"{approval.note}"</Text> : null}
             </View>
           ))
