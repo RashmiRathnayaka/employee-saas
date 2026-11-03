@@ -295,7 +295,33 @@ relevant event happens (leave submitted → notify manager; leave
 approved/rejected → notify employee). The web/mobile clients poll
 `GET /api/v1/notifications` via TanStack Query. Push/email are Phase 2+.
 
-## 8. Environments
+## 8. Dates and timezones
+
+Two kinds of date exist, and they are handled differently:
+
+- **Calendar dates** (`YYYY-MM-DD`: leave start/end, holidays, joining
+  date) have no time and no timezone. Postgres stores them as `date`; Prisma
+  returns them as a JS `Date` at UTC midnight, and the API sends them back as
+  `YYYY-MM-DD` strings. They are displayed as exactly that day, whatever the
+  viewer's timezone.
+- **Timestamps** (`createdAt`, `decidedAt`, `uploadedAt`, ...) are instants,
+  stored in UTC and displayed in the company's timezone.
+
+**"Today" and "this year" are always the company's** (`companies.timezone`,
+default `Asia/Colombo`), never the server's or the device's. The API uses
+`apps/api/src/lib/companyTime.ts` for past-date validation, revoke
+eligibility, "on leave today" and the current year's leave balances.
+Clients use the same rule for their own "today" (e.g. the date picker's
+earliest allowed day), so client and server agree.
+
+All of these helpers live once in `packages/shared/src/dates.ts`
+(`todayInTimezone`, `currentYearInTimezone`, `addDaysToIsoDate`,
+`daysBetweenIsoDates`, `toLocalIsoDate`, `formatDate`, `formatDateTime`,
+...) and are used by api, web and mobile. Never build a `YYYY-MM-DD` from
+a local-time `Date` with `toISOString()`. It converts to UTC first and is a
+day early anywhere east of UTC between local midnight and the UTC offset.
+
+## 9. Environments
 
 - **Dev**: `docker-compose.yml` runs Postgres and Mailpit (catches outbound
   email locally — not used for real sending until a later phase). File

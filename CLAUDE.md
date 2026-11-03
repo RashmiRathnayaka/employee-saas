@@ -95,6 +95,7 @@ Do not add new frameworks or major libraries without explaining why and asking f
 8. Save every step report to `docs/reports/step-X.md`.
 9. The developer (Rashmi) is learning this stack. When you introduce a new concept or pattern, explain it briefly in plain language.
 10. Never truncate, reset or reseed the DEV database without asking the developer first. The test database may be reset freely.
+11. Auth, tokens, users and companies are frozen pending the platform migration design. Do not change them without asking.
 
 ## Commands
 _(Update this section as scripts are created.)_
@@ -108,6 +109,7 @@ pnpm lint
 pnpm db:migrate
 pnpm db:seed
 pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the test DB (also runs automatically before `pnpm test`)
+pnpm --filter @employee-saas/shared test           # shared helpers (date tests run under TZ=Asia/Colombo and TZ=UTC)
 ```
 
 ## Status
