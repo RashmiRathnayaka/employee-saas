@@ -1,6 +1,7 @@
 # Database Schema — Phase 2 (Attendance & Site Management)
 
-**Status: design, awaiting approval (step 2.0).** Nothing here is migrated yet.
+**Status: design approved; open questions resolved 2026-11-03 (see
+`plan.md`).** Nothing here is migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -267,7 +268,11 @@ own values are.
 
 **`enabledModules` keys.** The JSON gains three keys: `attendance`, `sites`,
 `tasks`.
-- A missing key means **off** (deny by default). See open question Q1.
+- A missing key means **off** (deny by default; decided, Q1). New
+  companies get Phase 2 modules off.
+- The seed sets all three to `true` for ACME and leaves BETA without them
+  (off). The migration itself **doesn't** change any existing company's
+  `enabledModules` value.
 - Leave and notifications are Phase 1 core and are not gated.
 
 Times are stored as `HH:mm` text, not Postgres `time`. Prisma maps `time` to
@@ -450,7 +455,9 @@ An append-only history of HR changes. Rows are never updated or deleted.
 
 ---
 
-## Prisma back-relations and the freeze
+## Migrations: Prisma back-relations and the freeze
+
+**Approved by the developer (Q13, 2026-11-03).**
 
 Prisma needs a field on **both** sides of a relation. Adding a `Site`
 model with `company Company @relation(...)` therefore also needs a
@@ -459,9 +466,21 @@ model with `company Company @relation(...)` therefore also needs a
 
 These "back-relation" lines are Prisma metadata only. They generate **no
 SQL** on the `companies` or `users` tables; the foreign key lives on the
-new table. Each Phase 2 migration will be checked with `prisma migrate diff`
-to show that no `ALTER TABLE "companies"` / `"users"` appears.
+new table. So they're allowed under the freeze, while the tables
+themselves stay frozen.
 
-I'm treating this as allowed under the freeze, since the tables don't
-change, but it does touch the `Company` and `User` blocks in
-`schema.prisma`. That's open question Q13.
+**Rule for every Phase 2 migration:**
+1. Write the migration SQL with `prisma migrate diff` between the old and
+   new `schema.prisma`, as in step 1.7. Never use `migrate dev` or a reset,
+   because hand-written Phase 1 SQL (functional and partial indexes,
+   CHECKs) isn't in the Prisma schema and must not be dropped.
+2. **Check the generated SQL contains no `ALTER TABLE "companies"`, `ALTER
+   TABLE "users"` or `ALTER TABLE "refresh_tokens"`.** Any such line means
+   the freeze is being broken: stop and ask.
+3. Add the hand-written parts (functional/partial unique indexes, CHECKs,
+   `NULLS NOT DISTINCT`) to the migration SQL by hand, and record them in
+   this document.
+4. Apply with `prisma migrate deploy` to dev and test, and check the new
+   indexes in `pg_indexes`.
+5. The step report lists the back-relation lines added to `Company`/`User`
+   in that step.

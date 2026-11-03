@@ -1,6 +1,7 @@
 # API — Phase 2 endpoint list
 
-**Status: design, awaiting approval (step 2.0).**
+**Status: design approved; open questions resolved 2026-11-03 (see
+`plan.md`).**
 
 The conventions are the same as `docs/api-phase1.md`:
 - Base path `/api/v1`.
@@ -70,7 +71,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| POST | `/site-visits/check-in` | any employee | `{ siteId, clientRequestId, location?, note? }`. Uses the GPS rules with the site's settings. Starts the attendance day if needed (architecture §1.6). Notifies the manager (`SITE_CHECKED_IN`). **201**, or **200** on a retry. **409** `VISIT_ALREADY_OPEN`; **404** for an inactive or unknown site; **422** for the GPS errors. |
+| POST | `/site-visits/check-in` | any employee | `{ siteId, clientRequestId, location?, note? }`. Uses the GPS rules with the site's settings. Starts the attendance day if there's no record for the work date. If the employee already checked in (office) or the day is closed, only the visit is recorded (architecture §1.6, Q2). Notifies the manager (`SITE_CHECKED_IN`). **201**, or **200** on a retry. **409** `VISIT_ALREADY_OPEN`; **404** for an inactive or unknown site; **422** for the GPS errors. |
 | POST | `/site-visits/:id/check-out` | visit owner | `{ location?, note? }` → computes `durationMinutes`. **409** `VISIT_NOT_OPEN`. |
 | GET | `/site-visits/me` | any employee | My visits (`from`/`to`, paginated) |
 | GET | `/site-visits/me/open` | any employee | My open visit or `null` (also included in `/attendance/me/today`) |
@@ -90,13 +91,13 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | POST | `/tasks` | MANAGER (assignee must be a direct report), COMPANY_ADMIN, HR | `{ title, description?, assigneeEmployeeId, siteId?, dueDate? }`. Notifies the assignee (`TASK_ASSIGNED`). Assigning to yourself is allowed. |
 | PATCH | `/tasks/:id` | creator (a manager, only while the assignee is still on their team), COMPANY_ADMIN, HR | Edit title, description, site, due date or assignee. Reassigning notifies the new assignee. |
 | PATCH | `/tasks/:id/status` | assignee, assignee's MANAGER, COMPANY_ADMIN, HR | `{ status }`. Any → any between `TODO` / `IN_PROGRESS` / `DONE`. Setting `DONE` sets `completedAt`; leaving `DONE` clears it. When the assignee marks it DONE, the creator gets `TASK_COMPLETED`. |
-| DELETE | `/tasks/:id` | creator (as above), COMPANY_ADMIN, HR | Hard delete. Tasks aren't sensitive, so it isn't audited (Q22). |
+| DELETE | `/tasks/:id` | creator (as above), COMPANY_ADMIN, HR | Hard delete. Tasks aren't sensitive, so it isn't audited (decided, Q22). |
 
 ## Push devices & notification settings (no module gate)
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| POST | `/push-devices` | any company user | `{ expoPushToken, platform: "ANDROID" \| "IOS", deviceName? }`. Upsert by token; moves it to the caller if it belonged to someone else. **200** `{ device }`. Token format validated (`ExponentPushToken[...]`). |
+| POST | `/push-devices` | any company user | `{ expoPushToken, platform: "ANDROID" \| "IOS", deviceName? }`. Upsert by token; moves it to the caller if it belonged to someone else. **200** `{ device }`. Token validated with `Expo.isExpoPushToken` (`expo-server-sdk`). |
 | POST | `/push-devices/unregister` | any company user | `{ expoPushToken }` → disables it if it's the caller's. Always **204**, so it doesn't reveal whether the token exists. |
 | GET | `/notification-settings/me` | any company user | `{ pushEnabled, pushDisabledCategories, categories: [...] }` (defaults if no row) |
 | PATCH | `/notification-settings/me` | any company user | Update either field |

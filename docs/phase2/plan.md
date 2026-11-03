@@ -1,7 +1,8 @@
 # Phase 2 plan — Attendance & Site Management
 
-**Status: proposal, awaiting approval (step 2.0).** No code before you
-approve it.
+**Status: approved. All open questions were resolved by the developer on
+2026-11-03 (see "Resolved questions" at the end).** Implementation starts
+at step 2.1, when the developer says so.
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -42,6 +43,11 @@ and the riskiest unknowns come early:
     web and mobile, with no behaviour change)
 - `notifications.dedupeKey` column + partial unique index.
 - Pino redaction for location fields.
+- **Seed** (Q1): `seedCompany` sets `enabledModules` to `{ attendance:
+  true, sites: true, tasks: true }` for ACME and leaves BETA at `{}` (all
+  off).
+  - Running the seed against the **dev** DB still needs your permission
+    (CLAUDE.md #10). Tests use their own fixtures.
 
 **Try it:**
 - Web as Company Admin: toggle modules and change working hours, save,
@@ -53,8 +59,9 @@ and the riskiest unknowns come early:
 **Risks:**
 - Getting the timezone/DST helper right without a library. It's mitigated
   by table-driven tests, including a night shift and the London DST change.
-- The existing seed/dev companies have `enabledModules: {}`, so all Phase 2
-  modules start **off** until you switch them on (Q1).
+- Your current dev DB's ACME still has `enabledModules: {}`, so its
+  modules are off. Either switch them on in the new settings page (no
+  reseed needed), or let me reseed after you say yes.
 
 ## 2.2 Sites (API + web)
 **Scope**
@@ -90,14 +97,16 @@ and the riskiest unknowns come early:
   - Home gets an "Attendance" card: today's schedule, a big Check in /
     Check out button, times so far, and a "Late by 12 min" chip.
   - New **Attendance** tab with my history (infinite list).
-  - Online-only error messages.
+  - Online only (Q4): with no connection the app shows **"No internet
+    connection, try again"** and queues nothing.
 
 **Try it:**
 - Phone (Alex): check in. The card shows the time and PRESENT or LATE,
   depending on the time vs 09:00 + 10 min.
 - Tap again: the button now says Check out.
 - Check out: worked hours appear.
-- Airplane mode + tap: a clear "not recorded" message.
+- Airplane mode + tap: "No internet connection, try again", and nothing
+  is recorded.
 - Web as HR: nothing yet (the HR views come in 2.6). The API log shows the
   rows.
 
@@ -110,7 +119,8 @@ and the riskiest unknowns come early:
 
 ## 2.4 GPS verification + privacy disclosure
 **Scope**
-- `expo-location` (needs your approval). Foreground permission only, and
+- `expo-location` (approved, Q23: `npx expo install expo-location`).
+  Foreground permission only, and
   the plugin config removes the background permission.
 - Disclosure screen before the first permission prompt.
 - **Profile → Location & privacy** screen.
@@ -241,7 +251,8 @@ and the riskiest unknowns come early:
 ## 2.9 Push notifications
 **2.9a — Dev build only, no push code.**
 - Scope:
-  - add `expo-dev-client` + `eas.json`;
+  - add `expo-dev-client` (approved, Q23: `npx expo install
+    expo-dev-client`) + `eas.json`;
   - `npx eas-cli build --profile development --platform android`;
   - install it on your phone and run the app from it.
   - Fix whatever the pnpm monorepo needs for EAS (hoisting, `.npmrc`, the
@@ -261,7 +272,10 @@ and the riskiest unknowns come early:
   - tap-to-open (warm and cold start);
   - **Profile → Notifications** opt-out screen;
   - `.env.example` gets `EXPO_ACCESS_TOKEN`.
-- API tests mock Expo's HTTP endpoints. There are no real network calls in
+  - Libraries (approved, Q21/Q23):
+    - API: `expo-server-sdk`, behind our `PushSender` interface;
+    - mobile: `npx expo install expo-notifications expo-device`.
+- API tests use a fake `PushSender`. There are no real network calls in
   tests.
 - Try it: the full checklist in architecture §4.7 step 9.
 - Risks:
@@ -329,74 +343,46 @@ and the riskiest unknowns come early:
 
 ---
 
-## Open questions for you
-I made an assumption for each one so the design is complete. Tell me where
-I'm wrong.
 
-1. **Q1 Module default.** A missing `enabledModules` key = **off**, so
-   existing companies (ACME, BETA) start with attendance/sites/tasks off
-   until a Company Admin switches them on. The alternative is on by default.
-2. **Q2 Site visit starts the day.** I assumed the first site check-in also
-   starts the attendance day, for field workers who never visit the office.
-   Is that right, or must they always do an office/day check-in first?
-3. **Q3 One check-in/out pair per day.** No lunch-break out/in. Is that
-   enough for your target companies?
-4. **Q4 Offline.** Online-only in Phase 2 (server time is the truth). Do
-   your target customers have sites with no signal (construction, rural)?
-   If so, offline check-in needs its own step.
-5. **Q5 Site assignment.** Any employee can pick any active site; there are
-   no per-employee assignments. Is that OK, or should HR assign sites to
-   people?
-6. **Q6 GPS when not required.** I collect **no** location at sites where
-   GPS isn't required (data minimisation). The alternative is to always
-   collect it and only flag problems. That's more data for HR, but more
-   privacy risk.
-7. **Q7 Managers and coordinates.** Managers see "within radius / distance",
-   not the exact position. HR and Company Admin see the exact position.
-8. **Q8 Half-day leave.** Phase 1 doesn't record *which* half was taken. On
-   half-day leave days I skip lateness, and a day with no check-in counts
-   as ON_LEAVE. Should we add morning/afternoon to leave requests (a leave
-   module change)?
-9. **Q9 Check-in on an approved leave day.** It's allowed and flagged for
-   HR, but the leave isn't cancelled. Should HR also get a notification?
-10. **Q10 Early leave and overtime.** Early leave is recorded in minutes but
-    isn't a status. Overtime isn't calculated in Phase 2. OK?
-11. **Q11 Saturday half-day.** `HALF` days end at `halfDayEndTime` (default
-    13:00). Is that right for your companies?
-12. **Q12 Night shifts.** Supported through per-employee schedule overrides
-    that cross midnight. Rotating rosters (different shifts per week) are
-    **not** in Phase 2. OK?
-13. **Q13 Prisma back-relations under the freeze.** New tables need
-    back-relation lines inside the `Company` and `User` model blocks of
-    `schema.prisma`. They generate no SQL on `companies`/`users`, and I'll
-    show the `migrate diff` to prove it. Is that acceptable?
-14. **Q14 iOS.** Push and testing are Android-only for now (iOS needs an
-    Apple Developer account, $99/yr). Confirm?
-15. **Q15 Employee correction requests.** Employees can't request a
-    correction in the app ("I forgot to check out"); they tell HR, and HR
-    corrects it. Should a "request correction" button be in Phase 2?
-16. **Q16 Privacy policy.** Should the location disclosure link to a
-    company-specific privacy policy URL (a new company setting)? Google
-    Play will want an app-level privacy policy URL at publishing time
-    anyway.
-17. **Q17 GPS retention.** Raw coordinates are deleted after 90 days by
-    default (configurable 30–365). Is that a good default?
-18. **Q18 Check-in reminder timing.** It's sent at the scheduled start (as
-    the brief says), offset configurable. Would start + grace (e.g. 09:10)
-    be less annoying?
-19. **Q19 Proof deadline after "info required".** The Phase 1 deadline
-    stays the same after HR asks for more info, so the reminder can fire
-    straight away. Should "info required" give the employee a fresh
-    deadline?
-20. **Q20 Job runner.** I recommend the in-house runner (claim table + SKIP
-    LOCKED) over pg-boss (architecture §5.1). OK?
-21. **Q21 Expo push client.** Plain `fetch` (no new library) vs Expo's
-    `expo-server-sdk`. I'd go with plain fetch.
-22. **Q22 Task deletion.** Hard delete, not audited. OK, or should tasks be
-    soft-deleted?
-23. **Q23 New libraries.** This phase needs `expo-location` (2.4) and
-    `expo-notifications`, `expo-device`, `expo-dev-client` (2.9), all
-    installed via `npx expo install`. EAS CLI is used through `npx`. There
-    are no new API or web libraries. Do you approve them, each at its step?
-24. **Q24 Web check-in.** HR and managers check in from the mobile app only.
-    There's no web check-in button. OK?
+## Resolved questions
+All 24 were resolved by the developer on 2026-11-03.
+- **Your answer:** the decision you gave explicitly.
+- **Accepted:** you accepted my stated assumption ("for all other open
+  questions, accept your stated assumptions").
+
+| # | Topic | Decision | How |
+|---|---|---|---|
+| Q1 | Module default | A missing `enabledModules` key = **off**; new companies start with attendance/sites/tasks off. **Seed:** all three **on for ACME** (to test the features), **off for BETA** (to test `MODULE_DISABLED`). | Your answer |
+| Q2 | Site visit starts the day | **Yes.** A site check-in starts the attendance day if there's no record for that work date. If the employee already checked in at the office, **only the visit is recorded**. (A visit after the day was closed is also just recorded; it doesn't reopen the day. Architecture §1.6.) | Your answer |
+| Q3 | Sessions per day | One check-in/out pair per work date. No lunch-break out/in. | Accepted |
+| Q4 | Offline | **No offline check-in in Phase 2**, because the device clock can be manipulated. The app shows **"No internet connection, try again"**. Offline check-in is noted as a **possible future requirement** (architecture §1.5). | Your answer |
+| Q5 | Site assignment | Any employee can pick any active external site. No per-employee assignments. | Accepted |
+| Q6 | GPS at non-required sites | **No location collected** at sites that don't require GPS. The server also discards any location sent for them. | Your answer |
+| Q7 | Managers and coordinates | Managers see within-radius / distance only. HR and Company Admin see exact positions (detail view). | Accepted |
+| Q8 | Half-day leave | Skip lateness on half-day leave days; no check-in that day = `ON_LEAVE` (flag `HALF_DAY_LEAVE`). Morning/afternoon is not recorded (a possible future leave change). | Accepted |
+| Q9 | Check-in on approved leave | Allowed, flagged `ON_APPROVED_LEAVE`; the leave isn't cancelled, and HR isn't notified (the flag shows in the daily report). | Accepted |
+| Q10 | Early leave / overtime | Early leave is recorded in minutes, not as a status. No overtime in Phase 2. | Accepted |
+| Q11 | Half-day end | `HALF` days end at `halfDayEndTime`, default 13:00. | Accepted |
+| Q12 | Night shifts | Supported via per-employee overrides that cross midnight. No rotating rosters. | Accepted |
+| Q13 | Prisma back-relations | **Approved.** Back-relation fields on `User` and `Company` are fine because they generate no SQL. The migration rule is in the schema doc, "Migrations: Prisma back-relations and the freeze". | Your answer |
+| Q14 | iOS | Android only in Phase 2. | Accepted |
+| Q15 | Employee correction requests | Not in Phase 2; HR corrects. | Accepted |
+| Q16 | Privacy policy link | No company-specific link in Phase 2. An app-level URL is needed at Play Store publishing time. | Accepted |
+| Q17 | GPS retention | 90 days by default, configurable 30–365. | Accepted |
+| Q18 | Check-in reminder timing | At the scheduled start, plus `checkinReminderOffsetMinutes` (default 0). | Accepted |
+| Q19 | Proof deadline after "info required" | The deadline stays the same; there's no fresh deadline. | Accepted |
+| Q20 | Job runner | The in-house runner (`job_runs` claims + `SKIP LOCKED`), not pg-boss. | Accepted |
+| Q21 | Push client | **The official `expo-server-sdk`**, not plain fetch. It's a new `apps/api` dependency in step 2.9b, wrapped in a `PushSender` interface so tests use a fake. | Your answer |
+| Q22 | Task deletion | Hard delete, not audited. | Accepted |
+| Q23 | New libraries | **Approved:** `expo-location` (2.4), `expo-dev-client` (2.9a), `expo-notifications` + `expo-device` (2.9b), each installed with `npx expo install`. Plus `expo-server-sdk` (Q21). EAS CLI runs through `npx` and isn't a dependency. | Your answer |
+| Q24 | Web check-in | Mobile app only; no web check-in button. | Accepted |
+
+**Future requirements noted (not in Phase 2):**
+- offline check-in (Q4)
+- multiple sessions per day (Q3)
+- morning/afternoon half-day leave (Q8)
+- per-employee site assignments (Q5)
+- employee correction requests (Q15)
+- rotating rosters (Q12)
+- overtime (Q10)
+- iOS push (Q14)

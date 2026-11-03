@@ -1,6 +1,7 @@
 # Permissions — Phase 2 role × action matrix
 
-**Status: design, awaiting approval (step 2.0).**
+**Status: design approved; open questions resolved 2026-11-03 (see
+`plan.md`).**
 
 The legend and rules are the same as `docs/permissions.md`:
 - ✅ allowed · 🔶 allowed, scoped (see note) · ❌ not allowed.

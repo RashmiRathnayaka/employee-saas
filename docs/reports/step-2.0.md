@@ -2,8 +2,11 @@
 
 Source prompt: `docs/prompts/step-2.0.md`. **This is a design-only step.**
 The only code change is the prerequisite test-script fix. There are no
-migrations and no application code. **I'm waiting for your approval before
-step 2.1.**
+migrations and no application code.
+
+**Update 2026-11-03: you've answered all the open questions and the design
+docs are updated** (see "Follow-up: open questions resolved" at the end).
+Step 2.1 hasn't started; it waits for your go-ahead.
 
 ## What was done
 
@@ -166,3 +169,78 @@ Or split it:
 **Wait for your answers and approval.** After that, step **2.1
 Foundations**: module switches, schedule settings, the shared
 time/haversine helpers and the notification `dedupeKey`.
+
+---
+
+## Follow-up: open questions resolved (2026-11-03)
+You answered Q1, Q2, Q4, Q6, Q13, Q20/Q21/Q23 and accepted my stated
+assumptions for the rest. The full table is in `docs/phase2/plan.md` →
+"Resolved questions". Every "Q…" reference in the design docs now says
+"decided", and each doc's status line says the design is approved.
+
+### What changed in the design
+- **Q1 modules off by default.**
+  - Architecture §0 and the schema doc say a missing key = off.
+  - Step 2.1 gains a seed change: ACME gets attendance/sites/tasks **on**,
+    BETA stays **off** (for `MODULE_DISABLED` testing).
+  - The migration doesn't touch existing companies' values.
+  - Re-seeding the dev DB still needs your OK. Until then, you can switch
+    ACME's modules on in the 2.1 settings page.
+- **Q2 a site check-in starts the day.**
+  - Architecture §1.6 and the `POST /site-visits/check-in` row now spell it
+    out. With no record for the work date, the visit creates one (`source
+    = SITE_VISIT`) in the same transaction. If the employee already checked
+    in at the office, only the visit is recorded.
+  - **One detail I added, which wasn't in your answer:** a visit after the
+    day was already closed (checked out or auto-closed) is also just
+    recorded and doesn't reopen the day. Say if you want that rejected
+    instead.
+- **Q4 offline.** The message is "No internet connection, try again", for
+  check-in/out and site check-in/out. Offline check-in is listed as a
+  possible future requirement (architecture §1.5, plan "Future
+  requirements").
+- **Q6 no location at non-required sites.** Added: the server **discards** a
+  location sent for a non-required site, and a test checks the GPS columns
+  stay NULL. The rule doesn't rely on the app.
+- **Q13 back-relations approved.** The schema doc section is now
+  "Migrations: Prisma back-relations and the freeze". It has a 5-point rule
+  for every Phase 2 migration: write it with `migrate diff`, check there's
+  no `ALTER TABLE` on `companies`/`users`/`refresh_tokens` (stop and ask if
+  there is), add hand-written indexes by hand, deploy to dev + test, and
+  list the back-relation lines in the step report.
+- **Q21 `expo-server-sdk`.**
+  - Architecture §4.3/§4.4 now use `isExpoPushToken`,
+    `chunkPushNotifications`, `sendPushNotificationsAsync` and
+    `getPushNotificationReceiptsAsync`.
+  - It sits behind a `PushSender` interface (like `StorageService`), so
+    tests use a fake and never call Expo.
+  - Our outbox retry and device-disable logic is unchanged.
+- **Q20/Q23.** The in-house job runner is accepted. The four Expo libraries
+  are approved and marked at their steps:
+  - `expo-location`: 2.4
+  - `expo-dev-client`: 2.9a
+  - `expo-notifications`, `expo-device`: 2.9b
+
+### Files changed in this follow-up
+- `docs/phase2/plan.md`: status, steps 2.1/2.3/2.4/2.9, and the open
+  questions replaced by "Resolved questions" + "Future requirements"
+- `docs/phase2/architecture-phase2.md`
+- `docs/phase2/database-schema-phase2.md`
+- `docs/phase2/api-phase2.md`
+- `docs/phase2/permissions-phase2.md` (status line only)
+- `docs/reports/step-2.0.md` (this section)
+
+These are docs only, so no commands were run for this follow-up.
+
+### Suggested commit
+```
+docs: resolve phase 2 open questions (module defaults, site-visit day start, expo-server-sdk)
+```
+
+### Next step
+**Step 2.1 Foundations**, when you say go:
+- module switches;
+- the schedule settings;
+- the ACME/BETA seed module flags;
+- the shared time/haversine helpers;
+- the notification `dedupeKey`.
