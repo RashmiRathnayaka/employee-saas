@@ -2,17 +2,13 @@ import type { AdminDashboardSummary, ManagerDashboardSummary } from "@employee-s
 import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
-import { getTodayInTimezone } from "../../lib/leaveDays.js";
-
-function toUtcDate(isoDate: string): Date {
-  return new Date(`${isoDate}T00:00:00.000Z`);
-}
+import { companyTodayAsUtcDate } from "../../lib/companyTime.js";
 
 export async function getAdminDashboardSummary(companyId: string): Promise<AdminDashboardSummary> {
   const tenant = getTenantPrisma(companyId);
   const company = await platformPrisma.company.findUnique({ where: { id: companyId } });
   if (!company) throw new ApiError(500, "INTERNAL_ERROR", "Company not found.");
-  const today = toUtcDate(getTodayInTimezone(company.timezone));
+  const today = companyTodayAsUtcDate(company.timezone);
 
   const [activeEmployees, pendingLeaveRequests, proofsOverdue, onLeaveToday] = await Promise.all([
     tenant.employee.count({ where: { status: "ACTIVE" } }),
@@ -31,7 +27,7 @@ export async function getManagerDashboardSummary(params: {
   const tenant = getTenantPrisma(params.companyId);
   const company = await platformPrisma.company.findUnique({ where: { id: params.companyId } });
   if (!company) throw new ApiError(500, "INTERNAL_ERROR", "Company not found.");
-  const today = toUtcDate(getTodayInTimezone(company.timezone));
+  const today = companyTodayAsUtcDate(company.timezone);
 
   const [teamPendingRequests, teamOnLeaveToday] = await Promise.all([
     tenant.leaveRequest.count({

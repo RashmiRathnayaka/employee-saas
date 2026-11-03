@@ -1,3 +1,4 @@
+import { utcDateToIsoDate } from "@employee-saas/shared";
 import { ApiError } from "./errors.js";
 
 export type WorkDayWeight = "FULL" | "HALF" | "OFF";
@@ -15,9 +16,10 @@ export type WorkingDaysConfig = {
 const DAY_KEYS: Array<keyof WorkingDaysConfig> = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const WEIGHTS: Record<WorkDayWeight, number> = { FULL: 1, HALF: 0.5, OFF: 0 };
 
-function toDateKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
+// Inputs are UTC-midnight Dates (Prisma @db.Date shape), so the UTC
+// calendar fields below *are* the calendar day - the server's own
+// timezone never enters into it.
+const toDateKey = utcDateToIsoDate;
 
 /**
  * Sums each calendar day's working weight (FULL=1, HALF=0.5, OFF=0; a
@@ -109,16 +111,4 @@ export function normalizeWorkingDays(raw: unknown): WorkingDaysConfig {
     }
   }
   return result;
-}
-
-/** "Today" as a YYYY-MM-DD string in the given IANA timezone - used for
- * past-date and single-year validation, which must respect the company's
- * local calendar date, not the server's or the client's. */
-export function getTodayInTimezone(timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
 }

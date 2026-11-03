@@ -2,6 +2,7 @@ import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
+import { getCompanyCurrentYear } from "../../lib/companyTime.js";
 
 export async function listLeaveTypes(companyId: string) {
   const tenant = getTenantPrisma(companyId);
@@ -19,7 +20,8 @@ export async function createLeaveType(params: {
   allowPastDates: boolean;
 }) {
   const tenant = getTenantPrisma(params.companyId);
-  const currentYear = new Date().getUTCFullYear();
+  // The company's current year, not the server's (1 Jan 00:15 Colombo is still 31 Dec in UTC).
+  const currentYear = await getCompanyCurrentYear(params.companyId);
 
   try {
     return await tenant.$transaction(async (tx) => {

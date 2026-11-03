@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { calculateLeaveDays, getTodayInTimezone, normalizeWorkingDays, type WorkingDaysConfig } from "./leaveDays.js";
+import { describe, expect, it } from "vitest";
+import { isoDateToUtcDate, todayInTimezone } from "@employee-saas/shared";
+import { calculateLeaveDays, normalizeWorkingDays, type WorkingDaysConfig } from "./leaveDays.js";
+import { TEST_TIMEZONES, useProcessTimezone } from "../test/timezone.js";
 
 const STANDARD_WEEK: WorkingDaysConfig = {
   mon: "FULL",
@@ -191,22 +193,51 @@ describe("normalizeWorkingDays", () => {
   });
 });
 
-describe("getTodayInTimezone", () => {
-  afterEach(() => {
-    vi.useRealTimers();
+describe.each(TEST_TIMEZONES)("calculateLeaveDays across the Colombo midnight boundary (process TZ=$tz)", ({ tz, offsetMinutes }) => {
+  useProcessTimezone(tz, offsetMinutes);
+
+  // 00:15 Tue 6 Jan 2026 in Colombo = 18:45 Mon 5 Jan in UTC.
+  const now = new Date("2026-01-05T18:45:00.000Z");
+
+  it("treats the Colombo date as today, and counts its weekday correctly", () => {
+    const today = todayInTimezone("Asia/Colombo", now);
+    expect(today).toBe("2026-01-06");
+
+    // Tue 6 -> Sat 10: Tue-Fri = 4 full days + Sat half = 4.5. If the day had
+    // slipped back to Mon 5 (the UTC date), the range would read Mon-Fri = 5.
+    const total = calculateLeaveDays({
+      startDate: isoDateToUtcDate(today),
+      endDate: isoDateToUtcDate("2026-01-10"),
+      startHalfDay: false,
+      endHalfDay: false,
+      workingDays: STANDARD_WEEK,
+      holidays: new Set(),
+    });
+    expect(total).toBe(4.5);
   });
 
-  it("returns a YYYY-MM-DD string", () => {
-    const today = getTodayInTimezone("Asia/Colombo");
-    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  it("matches a holiday on today's Colombo date, not the UTC date", () => {
+    const today = todayInTimezone("Asia/Colombo", now);
+    const total = calculateLeaveDays({
+      startDate: isoDateToUtcDate("2026-01-05"),
+      endDate: isoDateToUtcDate(today),
+      startHalfDay: false,
+      endHalfDay: false,
+      workingDays: STANDARD_WEEK,
+      holidays: new Set([today]),
+    });
+    expect(total).toBe(1); // Mon 5 counts, Tue 6 is the holiday
   });
 
-  it("reflects the local date, not the UTC date, near a day boundary", () => {
-    // 2026-01-05T23:00:00Z is already 2026-01-06 04:30 in Asia/Colombo (UTC+5:30)
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-05T23:00:00.000Z"));
-
-    expect(getTodayInTimezone("Asia/Colombo")).toBe("2026-01-06");
-    expect(getTodayInTimezone("UTC")).toBe("2026-01-05");
+  it("weights a weekend range by its own calendar days (Sat half + Sun off)", () => {
+    const total = calculateLeaveDays({
+      startDate: isoDateToUtcDate("2026-01-10"),
+      endDate: isoDateToUtcDate("2026-01-11"),
+      startHalfDay: false,
+      endHalfDay: false,
+      workingDays: STANDARD_WEEK,
+      holidays: new Set(),
+    });
+    expect(total).toBe(0.5);
   });
 });

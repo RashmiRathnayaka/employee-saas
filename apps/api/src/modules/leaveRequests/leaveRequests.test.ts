@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import { addDaysToIsoDate, todayInTimezone } from "@employee-saas/shared";
 import { createApp } from "../../app.js";
 import { createEmployeeWithLogin, getLeaveTypeIdByCode, setUpCompanyWithUser } from "../../test/helpers.js";
 
@@ -176,9 +177,9 @@ describe("POST /api/v1/leave-requests", () => {
     const typesRes = await request(app).get("/api/v1/leave-types").set("Authorization", adminToken);
     const sickTypeId = typesRes.body.data.find((t: { code: string }) => t.code === "SICK").id;
 
-    const today = new Date();
-    const tenDaysAgo = new Date(today.getTime() - 10 * 86_400_000).toISOString().slice(0, 10);
-    const fortyDaysAgo = new Date(today.getTime() - 40 * 86_400_000).toISOString().slice(0, 10);
+    const today = todayInTimezone("Asia/Colombo");
+    const tenDaysAgo = addDaysToIsoDate(today, -10);
+    const fortyDaysAgo = addDaysToIsoDate(today, -40);
 
     const recentRes = await request(app)
       .post("/api/v1/leave-requests")

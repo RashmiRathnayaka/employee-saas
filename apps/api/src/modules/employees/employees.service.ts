@@ -6,6 +6,7 @@ import { writeAudit } from "../../lib/audit.js";
 import { generateTempPassword } from "../../lib/tempPassword.js";
 import { hashPassword } from "../../lib/passwordHashing.js";
 import { lockOrCreateBalance } from "../leaveRequests/leaveRequests.service.js";
+import { getCompanyCurrentYear } from "../../lib/companyTime.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
 
@@ -68,6 +69,10 @@ export async function createEmployee(params: {
     passwordHash = await hashPassword(temporaryPassword);
   }
 
+  // The company's current year, not the server's - balances are seeded for
+  // the year the company is actually in (see lib/companyTime.ts).
+  const currentYear = await getCompanyCurrentYear(params.companyId);
+
   const { employee, user } = await tenant.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<{ prefix: string; assigned: number }[]>`
       UPDATE company_settings
@@ -101,7 +106,6 @@ export async function createEmployee(params: {
     });
 
     const leaveTypes = await tx.leaveType.findMany({ where: { companyId: params.companyId } });
-    const currentYear = new Date().getUTCFullYear();
     await Promise.all(
       leaveTypes.map((leaveType) =>
         tx.leaveBalance.create({

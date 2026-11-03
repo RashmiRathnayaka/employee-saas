@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
+import { currentYearInTimezone, DEFAULT_TIMEZONE } from "@employee-saas/shared";
 import { DEFAULT_LEAVE_TYPES } from "../src/lib/defaultLeaveTypes.js";
 
 const prisma = new PrismaClient();
@@ -46,7 +47,9 @@ async function seedCompany(params: {
   passwordHash: string;
 }) {
   const { name, code, employeeCodePrefix, passwordHash } = params;
-  const currentYear = new Date().getUTCFullYear();
+  // Seeded companies use the default timezone (Asia/Colombo), so "this year"
+  // is Colombo's year - not UTC's, which lags by 5.5 hours on 1 Jan.
+  const currentYear = currentYearInTimezone(DEFAULT_TIMEZONE);
 
   const company = await prisma.company.upsert({
     where: { code },

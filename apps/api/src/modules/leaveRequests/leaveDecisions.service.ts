@@ -5,8 +5,8 @@ import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { createNotification } from "../../lib/notifications.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
-import { getTodayInTimezone } from "../../lib/leaveDays.js";
-import { lockOrCreateBalance, toUtcDate } from "./leaveRequests.service.js";
+import { companyTodayAsUtcDate } from "../../lib/companyTime.js";
+import { lockOrCreateBalance } from "./leaveRequests.service.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
 
@@ -231,7 +231,7 @@ export async function revokeLeaveRequest(params: {
   if (!company) {
     throw new ApiError(500, "INTERNAL_ERROR", "Company not found.");
   }
-  const today = toUtcDate(getTodayInTimezone(company.timezone));
+  const today = companyTodayAsUtcDate(company.timezone);
   if (leaveRequest.startDate.getTime() <= today.getTime()) {
     throw new ApiError(409, "NOT_REVOCABLE", "Only a future-dated approved request can be revoked.");
   }

@@ -1,11 +1,11 @@
-import type { Role } from "@employee-saas/shared";
+import { addDaysToIsoDate, daysBetweenIsoDates, isoDateToUtcDate, todayInTimezone, utcDateToIsoDate, type Role } from "@employee-saas/shared";
 import type { LeaveBalance, Prisma } from "@prisma/client";
 import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { createNotification } from "../../lib/notifications.js";
-import { calculateLeaveDays, getTodayInTimezone, normalizeWorkingDays } from "../../lib/leaveDays.js";
+import { calculateLeaveDays, normalizeWorkingDays } from "../../lib/leaveDays.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
 // Deliberately loose - see the comment on lib/audit.ts's AuditClient for
@@ -18,13 +18,8 @@ type Tx = any;
 
 const PAST_DATE_WINDOW_DAYS = 30;
 
-function toUtcDate(isoDate: string): Date {
-  return new Date(`${isoDate}T00:00:00.000Z`);
-}
-
-function dateKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
+const toUtcDate = isoDateToUtcDate;
+const dateKey = utcDateToIsoDate;
 
 /** Locks the balance row for the duration of the transaction (creating it
  * first, from the leave type's default, if it's missing - the normal path
@@ -174,12 +169,13 @@ export async function submitLeaveRequest(params: {
   }
   const year = startDate.getUTCFullYear();
 
-  const today = toUtcDate(getTodayInTimezone(company.timezone));
-  if (startDate.getTime() < today.getTime()) {
+  // "Today" is the company's calendar day, not the server's (see lib/companyTime.ts).
+  const todayIso = todayInTimezone(company.timezone);
+  const daysAgo = daysBetweenIsoDates(params.startDate, todayIso);
+  if (daysAgo > 0) {
     if (!leaveType.allowPastDates) {
       throw new ApiError(400, "PAST_DATE_NOT_ALLOWED", "This leave type cannot be submitted for a past date.");
     }
-    const daysAgo = Math.round((today.getTime() - startDate.getTime()) / 86_400_000);
     if (daysAgo > PAST_DATE_WINDOW_DAYS) {
       throw new ApiError(
         400,
@@ -223,7 +219,7 @@ export async function submitLeaveRequest(params: {
   const initialStatus = routedToHr ? "PENDING_HR" : "PENDING_MANAGER";
   const proofStatus = leaveType.requiresProof ? "MISSING" : "NOT_REQUIRED";
   const proofDueAt = leaveType.requiresProof
-    ? new Date(startDate.getTime() + settings.sickLeaveProofDeadlineDays * 86_400_000)
+    ? toUtcDate(addDaysToIsoDate(params.startDate, settings.sickLeaveProofDeadlineDays))
     : null;
 
   return tenant.$transaction(async (tx) => {

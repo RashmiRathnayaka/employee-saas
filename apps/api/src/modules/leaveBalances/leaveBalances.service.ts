@@ -2,10 +2,7 @@ import type { Role } from "@employee-saas/shared";
 import { ApiError } from "../../lib/errors.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
-
-function currentYear(): number {
-  return new Date().getUTCFullYear();
-}
+import { getCompanyCurrentYear } from "../../lib/companyTime.js";
 
 export async function getBalancesForEmployee(params: {
   companyId: string;
@@ -33,7 +30,7 @@ export async function getBalancesForEmployee(params: {
   }
 
   const balances = await tenant.leaveBalance.findMany({
-    where: { employeeId: params.employeeId, year: currentYear() },
+    where: { employeeId: params.employeeId, year: await getCompanyCurrentYear(params.companyId) },
   });
   return balances;
 }
