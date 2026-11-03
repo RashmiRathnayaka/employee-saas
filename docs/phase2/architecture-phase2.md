@@ -1,0 +1,681 @@
+# Architecture — Phase 2 (Attendance & Site Management)
+
+**Status: design, awaiting approval (step 2.0).**
+
+This adds to `docs/architecture.md`. Everything in it still holds: tenant
+scope from the token only, `getTenantPrisma`, audit in the same transaction,
+calendar dates vs timestamps (§8). Tables are in
+`database-schema-phase2.md`, endpoints in `api-phase2.md`, roles in
+`permissions-phase2.md`.
+
+`docs/architecture/platform.md` (the central identity design) doesn't exist
+yet. §7 below lists what Phase 2 does to stay out of its way.
+
+---
+
+## 0. Module gating
+
+A new middleware, `requireModule("attendance" | "sites" | "tasks")`, runs
+right after `requireAuth` on every Phase 2 router.
+- It reads `company_settings.enabledModules` for `req.auth.companyId`, with
+  a short in-process cache (30 s) so it isn't a DB hit on every request.
+- Off → `403 { error: { code: "MODULE_DISABLED", message, details: { module } } }`.
+- The check runs before any resource lookup. A disabled module therefore
+  answers 403 even for an id from another company. That leaks nothing,
+  because it's about the caller's own company.
+- `GET /company/settings` already returns `enabledModules`. Web and mobile
+  hide tabs, menu items and dashboard tiles from it, using a shared
+  `isModuleEnabled(settings, key)` helper.
+- Mapping:
+  - `attendance`: office attendance, schedules, corrections, attendance
+    reports, check-in reminders, day close.
+  - `sites`: sites, site visits, site reports.
+  - `tasks`: tasks.
+  - With `sites` off, `tasks.siteId` is ignored on write and hidden on read.
+  - With `attendance` off, a site visit doesn't start an attendance day.
+- Jobs check the flag too. A company with `attendance` off gets no
+  reminders, no absent marking and no auto-close.
+
+---
+
+## 1. Attendance rules
+
+### 1.1 The model: one record per employee per work date
+- **`workDate`** is the company-local calendar date **the shift starts on**.
+- There is **one check-in and one check-out per work date** (no
+  lunch-break out/in pairs). It's the simplest model that covers the
+  requirement, and it makes double check-in structurally impossible
+  (unique index). Multiple sessions per day would need a child table; see
+  open question Q3.
+- **Who can check in.** Anyone with an employee profile, an active login
+  and the `attendance` module on. That includes HR and managers, who are
+  employees too. Check-in happens in the mobile app only; the web portal
+  has no check-in button in Phase 2.
+
+### 1.2 Effective schedule for a date
+`getEffectiveSchedule(employeeId, workDate)` is the one function that
+answers "what were they supposed to work?":
+1. `employee_schedules` override if present, else company defaults
+   (`workStartTime`, `workEndTime`, `lateGraceMinutes`, `workingDays`).
+2. Day weight from `workingDays[weekday]`:
+   - `OFF` → non-working day.
+   - `HALF` → end time is `halfDayEndTime`. For an override whose start is
+     after `halfDayEndTime`, a `HALF` day is treated as `FULL`.
+3. `company_holidays` on that date → non-working day.
+4. Approved leave covering that date:
+   - full day → "on leave";
+   - `startHalfDay`/`endHalfDay` on that date → "half-day leave" (no
+     lateness computed; see Q8).
+5. The result has `scheduledStartAt` and `scheduledEndAt` as **UTC instants**.
+   - They're built with a new shared helper,
+     `zonedDateTimeToUtc("2026-11-03", "09:00", "Asia/Colombo")`.
+   - If `endTime <= startTime`, the end is on `workDate + 1` (night shift).
+
+`zonedDateTimeToUtc` goes in `packages/shared/src/dates.ts`. It uses only
+`Intl.DateTimeFormat` (no new library) and is tested under
+`TZ=Asia/Colombo` and `TZ=UTC`, plus a DST zone (`Europe/London`) for the
+day the clocks change.
+
+### 1.3 Which work date does a check-in belong to?
+- For a **day shift**, it's simply the local date of the check-in.
+- For a **night shift crossing midnight** (e.g. 22:00–06:00), a check-in at
+  23:50 on the 3rd and one at 00:20 on the 4th must both count as the shift
+  that starts on the 3rd.
+
+The rule:
+1. Take the local date `D` of "now".
+2. If the employee's effective schedule for `D − 1` crosses midnight, and
+   now is before `scheduledEnd(D − 1)`, the work date is `D − 1`.
+3. Otherwise the work date is `D`.
+4. Check-ins earlier than 4 hours before `scheduledStart(D)` are still
+   accepted (early birds) and belong to `D`.
+
+The server always decides this. The client never sends `workDate`.
+
+### 1.4 Status
+Status is recomputed by one pure function, `computeAttendanceStatus(record,
+schedule)`, whenever a record is created, checked out, corrected or closed.
+
+| Situation | `status` | Notes |
+|---|---|---|
+| Checked in on or before `scheduledStart + grace` | `PRESENT` | |
+| Checked in after `scheduledStart + grace` | `LATE` | `lateMinutes = checkIn − scheduledStart` (counted from the start, not from the end of grace) |
+| Checked in, never checked out, day closed | `INCOMPLETE` | `lateMinutes` still kept; `workedMinutes` NULL |
+| No check-in, working day, approved leave covers it | `ON_LEAVE` | Written by day close |
+| No check-in, company holiday | `HOLIDAY` | Written by day close |
+| No check-in, working day, no approved leave | `ABSENT` | Written by day close |
+| Weekly OFF day, no check-in | *no row* | Reports show "Off" |
+
+- **Precedence:** `INCOMPLETE` > `LATE` > `PRESENT`.
+- **Present days** in reports = `PRESENT + LATE + INCOMPLETE`. Late days
+  are a subset of present days.
+- **`workedMinutes`** = `checkOut − checkIn` in whole minutes. There's no
+  break deduction and no overtime in Phase 2.
+- **`earlyLeaveMinutes`** = `scheduledEnd − checkOut` if positive. It's
+  recorded and shown in reports, but it isn't a status.
+
+### 1.5 Edge cases
+
+| Case | Behaviour | Why |
+|---|---|---|
+| **Night shift crossing midnight** | Handled by the work-date rule (§1.3) and by `scheduledEndAt` being on the next day. Day close runs at `scheduledEndAt + autoCheckoutAfterMinutes`, not at midnight. | "End of day" means end of *that shift*. Closing at midnight would wrongly cut every night shift in half. |
+| **Check-in on a holiday or weekly off day** | Allowed. Status is `PRESENT` (never `LATE`, since there's no schedule), flag `NON_WORKING_DAY`. | People do work holidays. Blocking them loses real data, and the flag lets a later overtime phase find these days. |
+| **Check-in on an approved full-day leave day** | Allowed, status `PRESENT`/`LATE`, flag `ON_APPROVED_LEAVE`. The leave is **not** auto-cancelled and the balance isn't touched. HR sees the flag in the daily report. | Changing a leave balance is an HR decision (audited), not a side effect of a button tap. |
+| **Check-in on a half-day leave day** | Allowed, `lateMinutes = 0`, flag `HALF_DAY_LEAVE`. | Phase 1 doesn't record *which* half was taken, so lateness can't be judged fairly (Q8). |
+| **Double check-in** (double tap, two devices, retry) | The unique index on `(companyId, employeeId, workDate)` rejects the second insert → `409 ALREADY_CHECKED_IN`, with the existing record in `details`. If it carries the same `clientRequestId` as the first, it's a retry and gets `200` with the existing record. | Structural, so it holds even under true concurrency, and a lost response doesn't show the employee a scary error. |
+| **Check-in again after checking out the same day** | `409 ALREADY_CHECKED_OUT`. | One pair per day (§1.1). HR can correct the times. |
+| **Check-out without check-in** | `409 NOT_CHECKED_IN`. The app only shows "Check out" when today's record has a check-in, so this mostly guards against stale screens. | There's nothing to close, and inventing a check-in time would be fake data. |
+| **Check-out after the day was auto-closed** | `409 DAY_ALREADY_CLOSED`. The app says "Your day was closed automatically. Ask HR to correct it." | Accepting a check-out hours later would produce an unreal `workedMinutes`. HR corrections have a reason and an audit trail. |
+| **Shift longer than 16 h** (forgot to check out, came back next day) | Can't happen through check-out, since auto-close fires first. Through an HR correction it's allowed with flag `LONG_SHIFT`. | |
+| **Phone offline** | **Phase 2 is online-only.** The check-in button sends immediately; with no connection the app shows "No connection. Check-in not recorded. Try again." and keeps nothing queued. The server's clock is the only source of `checkInAt`. The request may include `clientTime`, which is logged for diagnosis and never trusted. | A queued offline check-in carries a phone-reported time, and the phone's clock is user-editable, so it can't be trusted for pay-relevant data. Doing offline properly means signed timestamps, a sync queue and conflict rules: its own step, if needed (Q4). |
+| **Flaky network (request sent, response lost)** | The app keeps the `clientRequestId` for that tap and resends it on retry. The server returns the same record. | Safe retry without double records. |
+| **Employee deactivated mid-shift** | Open record → closed by the deactivation transaction as `INCOMPLETE` with `AUTO_CLOSED`. | The same transaction already cancels pending leave in Phase 1. |
+| **Day close before joining date / after deactivation** | No row is written. | Not absent: not employed that day. |
+| **Leave approved after the day was marked ABSENT** | Flipped to `ON_LEAVE` in the leave approval transaction (schema doc, "cross-module effects"). | Sick leave is usually filed after the fact. |
+| **Schedule changed after the fact** | Past records keep their `scheduledStartAt`/`scheduledEndAt` snapshot. | Lateness is judged against the rule that was in force. |
+| **Server clock vs company timezone** | All rules use UTC instants, plus `companies.timezone` only to turn wall times into instants. The server's own `TZ` is irrelevant, and tests run under two TZs. | Same rule as Phase 1 (`architecture.md` §8). |
+
+### 1.6 Site visits and the attendance day
+- A field worker may go straight to a customer site. If the `attendance`
+  module is on and the employee has no attendance record for the current
+  work date, **the first site check-in also starts the attendance day**.
+  It creates `attendance_records` with `source = SITE_VISIT`, the same
+  `checkInAt`, and lateness judged normally.
+- The day is ended by the normal "Check out for the day" or by auto-close.
+- Checking out of a site **does not** end the attendance day, because
+  another visit may follow.
+- Open question Q2 asks if that assumption is right.
+- Only one site visit can be open at a time. Starting a new one while
+  another is open → `409 VISIT_ALREADY_OPEN`, and the app offers "Check out
+  of <site> first".
+- **Day check-out with an open site visit**: the visit is closed at the
+  same instant, with the same location, in the same transaction.
+- **Manager notification:** on site check-in, the employee's manager gets
+  an in-app notification `SITE_CHECKED_IN` ("Alex checked in at Site X,
+  10:42"), plus push from step 2.9. This is sent only if the manager has an
+  active login. HR isn't notified, to avoid noise; HR uses the site report.
+  It's written in the same transaction as the visit, like Phase 1
+  notifications.
+
+### 1.7 HR corrections
+- HR and Company Admin can:
+  - change `checkInAt` / `checkOutAt` (and the office site) of a record;
+  - create a record for a day that has none;
+  - correct a site visit's times.
+- A `reason` (at least 5 characters) is required. Each correction writes
+  `attendance_corrections` (before/after) and `audit_logs` in one
+  transaction, and the status is recomputed.
+- HR **cannot set a status directly**:
+  - `ON_LEAVE` only comes from approved leave;
+  - `HOLIDAY` only from the holiday calendar;
+  - everything else from times.
+
+  This keeps the status consistent with its sources.
+- **Self-correction is blocked**: an HR user can't correct their own
+  attendance. This uses the same `employeeId` comparison as self-approval
+  in Phase 1.
+- Corrected values are **never GPS-verified**. GPS columns stay as captured
+  (or NULL for HR-created rows), and `isCorrected = true` shows in every
+  view.
+- The employee gets an `ATTENDANCE_CORRECTED` notification with the reason.
+
+---
+
+## 2. Sites
+- HR and Company Admin manage sites:
+  - name, type (`OFFICE` / `EXTERNAL`), address, latitude/longitude,
+    radius (25–5000 m), GPS required, active.
+- New sites take `radiusMeters` and `gpsRequired` defaults from
+  `company_settings.gpsRadiusMeters` / `gpsCheckinEnabledDefault`.
+- Coordinates are entered as numbers. The web form shows an
+  "Open in Google Maps" link to check them. There's no map widget and no
+  new library; HR can copy coordinates from Google Maps (right-click → the
+  coordinates line).
+- **Which sites an employee can pick:** all active `EXTERNAL` sites in the
+  company. Sites from the employee's open tasks are listed first. There
+  are no per-employee site assignments in Phase 2 (Q5).
+- **Office attendance and GPS:**
+  - If the company has no active `OFFICE` site, office check-in has no GPS
+    at all (flag `NO_OFFICE_SITE`).
+  - Otherwise the server compares the location with the **nearest** active
+    `OFFICE` site and applies that site's `gpsRequired` / `radiusMeters`.
+  - The app doesn't ask the employee to pick an office.
+
+---
+
+## 3. GPS verification and privacy
+
+### 3.1 What is captured, and when
+- **Foreground only, only at the moment of a check-in or check-out tap.**
+  - The app asks for **foreground** location permission only
+    (`requestForegroundPermissionsAsync`).
+  - `app.json` sets the `expo-location` plugin so the Android build contains
+    **no** `ACCESS_BACKGROUND_LOCATION` permission, and iOS has no "Always"
+    usage string.
+  - There is no `watchPositionAsync` and no background task.
+- **Location is requested only when the site needs it.** That means the
+  office site (for day check-in) or the chosen site (for a visit) has
+  `gpsRequired = true`.
+  - Otherwise the app doesn't ask for a location and the server stores none.
+  - This is data minimisation: don't collect what you won't use. Q6 asks
+    whether you'd rather "collect and flag" everywhere.
+- **What's sent:** `{ latitude, longitude, accuracy, mocked, capturedAt }`,
+  from one `getCurrentPositionAsync({ accuracy: High })` call.
+  - It has a 15 s timeout, after which it falls back to the best fix it got.
+- **The server calculates** the haversine distance to the site, from the
+  site's stored coordinates. It stores lat, lng, accuracy, distance,
+  `withinRadius` and `mocked`.
+  - The client never sends a distance or a "within" flag.
+  - The haversine function lives in `packages/shared` so the app can show
+    "You're about 850 m from Site X" before submitting. Only the server's
+    answer counts.
+
+### 3.2 The three hard cases: rejected, or allowed but flagged?
+These rules apply when the site has `gpsRequired = true`:
+- `distance` is from the fix to the site centre.
+- `accuracy` is the phone's reported radius of uncertainty.
+- `max` is `company_settings.gpsMaxAccuracyMeters`.
+
+| Case | At **check-in** | At **check-out** | Why |
+|---|---|---|---|
+| **No location** (permission denied, GPS off, timeout with no fix) | **Rejected** `422 LOCATION_REQUIRED`. The app explains how to turn location on. | **Allowed, flagged** (`LOCATION_UNAVAILABLE_AT_CHECKOUT`) | At check-in the employee is standing there and can fix it. A blocked check-out would leave the record open and turn into a worse `INCOMPLETE`. |
+| **Outside the radius**, with a good fix (`accuracy <= max` and `distance > radius`) | **Rejected** `422 OUTSIDE_SITE_RADIUS`. `details`: `{ distanceM, radiusM, siteName }`, so the app can say "You are 850 m from Site X". | **Allowed, flagged** `OUTSIDE_RADIUS_AT_CHECKOUT` | "GPS required" must mean something. Rejecting while the person is still there gives instant feedback (wrong site picked, walk to the gate). HR can still create a corrected record with a reason for genuine exceptions. People check out as they leave, so being outside then is normal. |
+| **Poor accuracy** (`accuracy > max`) | Depends on what the uncertainty circle says: **certainly inside** (`distance + accuracy <= radius`) → accepted, no flag; **certainly outside** (`distance − accuracy > radius`) → rejected `OUTSIDE_SITE_RADIUS`; **can't tell** (the circle overlaps the boundary) → **allowed, flagged `LOW_ACCURACY`**. | Allowed; flag `LOW_ACCURACY` if `accuracy > max` | Indoors, GPS accuracy is often 50–200 m. Rejecting every vague fix would lock real people out of their own office every day. When the circle overlaps the site, they may well be there, so we let them in and HR sees the flag. When even the best case is outside, it's an outside case. |
+| **Mock location** (`mocked = true`; expo-location sets this on Android when the fix comes from a mock provider) | **Rejected** `422 MOCK_LOCATION_DETECTED`. An `audit_logs` row `ATTENDANCE_CHECKIN_REJECTED` records `{ reason, siteId }` and **no coordinates**. | **Allowed, flagged** `MOCK_LOCATION_AT_CHECKOUT` | A mock location is deliberate. Flagging alone would make GPS-required trivially bypassable. The audit row lets HR see repeated attempts. At check-out the same "don't leave it open" reasoning applies, and the flag shows up in reports. |
+| **Stale fix** (`capturedAt` more than 2 min before server time) | Allowed, flagged `STALE_LOCATION` | Same | Phones can hand back a cached fix. We don't reject on this, because the phone's clock may also be wrong. |
+
+Rejections at check-in for `OUTSIDE_SITE_RADIUS` and `LOCATION_REQUIRED`
+are **not** audited. They're normal "try again" events; auditing them would
+store a location trail of failed attempts. Only mock detection is.
+
+**Honest limits, to tell HR:**
+- `mocked` is reported only on Android. iOS has no equivalent signal, so
+  iOS can't detect mocks.
+- A rooted Android phone can hide mocking.
+- So GPS verification is a deterrent and a record, not proof of presence.
+
+### 3.3 Who sees what
+| Data | Employee (own) | Manager (team) | HR / Company Admin | Super Admin |
+|---|---|---|---|---|
+| Times, status, worked/late minutes | ✅ | ✅ | ✅ | ❌ |
+| `withinRadius`, distance, accuracy, flags | ✅ | ✅ | ✅ | ❌ |
+| Raw latitude/longitude | ✅ | ❌ | ✅ (detail view only, not lists or CSV) | ❌ |
+
+- Managers need "were they at the site?", not a point on a map.
+- CSV exports never contain raw coordinates.
+
+### 3.4 What employees are told
+- **Before the first location permission prompt**, the app shows a
+  one-time disclosure screen. Google Play requires a "prominent disclosure"
+  before asking for location, and it's the honest thing to do. It says:
+  > **Why we ask for your location**
+  > Your company requires location verification when you check in or out
+  > at some work sites.
+  > - We read your location **once**, only when you tap **Check in** or
+  >   **Check out**. We never track you in the background.
+  > - We store the position, its accuracy, and how far you were from the
+  >   site.
+  > - Your manager sees whether you were within the site area and how far
+  >   away you were. HR can also see the exact position.
+  > - Exact positions are deleted after **{gpsRetentionDays} days**. Whether
+  >   you were inside the area is kept with your attendance record.
+- "Continue" opens the OS permission dialog; "Not now" goes back.
+- The same text is always available under **Profile → Location & privacy**,
+  which also shows the current OS permission state.
+- Wording lives in `strings.ts` (it's English-only, like Phase 1).
+- Q16 asks whether the company needs its own privacy-policy link here.
+
+### 3.5 Retention
+- **Raw coordinates:** erased after `gpsRetentionDays` (default 90, range
+  30–365) by the nightly `gps.purge` job. It sets `*Lat`/`*Lng` to NULL on
+  attendance records and site visits whose `checkInAt` is older than that.
+- **Distance, `withinRadius`, accuracy, flags and times** are kept with the
+  attendance record. They are employment records, and how long a company
+  must keep them depends on local law, which is the company's decision. In
+  Phase 2 they're kept indefinitely.
+- **Rejected attempts:** they have no coordinates anywhere, and audit rows
+  only hold the reason.
+- **Logs:** pino redaction gains `*.latitude`, `*.longitude`, `location`, so
+  coordinates never reach the logs. A test asserts this, like the Phase 1
+  logger test.
+
+---
+
+## 4. Push notifications
+
+### 4.1 Shape: every in-app notification can also be a push
+- `createNotification()` (Phase 1, `apps/api/src/lib/notifications.ts`)
+  stays the only way to notify.
+- After writing the `notifications` row, in the **same transaction**, it
+  looks up the recipient's active `push_devices`.
+  - It writes one `push_messages` row (status `PENDING`) per device, unless
+    the user turned push off or turned off that category.
+  - A rolled-back event therefore never sends a push. This is the
+    **outbox pattern**: you record "a message must be sent" in the same
+    transaction as the change, and a separate worker does the slow,
+    may-fail network call afterwards.
+- **Categories** (for opt-out): `LEAVE`, `ATTENDANCE`, `SITES`, `TASKS`,
+  `REMINDERS`. The mapping from notification `type` to category lives in
+  `packages/shared`.
+
+### 4.2 Device tokens
+- After login, and on every app start while logged in, the app:
+  1. asks for notification permission (Android 13+ shows a dialog);
+  2. calls `Notifications.getExpoPushTokenAsync({ projectId })`;
+  3. calls `POST /push-devices { expoPushToken, platform, deviceName }`.
+  - It's an upsert by token. It moves the token to this user and company
+    if it was someone else's, clears `disabledAt`, and bumps `lastSeenAt`.
+- **On logout** the app calls `POST /push-devices/unregister` *before*
+  `/auth/logout`. The logout endpoint is frozen and stays untouched.
+  - If the app is uninstalled or the call fails, Expo eventually reports
+    `DeviceNotRegistered` and the token is disabled (§4.4).
+- Sending also skips devices whose user is deactivated or whose company is
+  suspended. This is checked at send time.
+- Devices not seen for 60 days are disabled by the housekeeping job.
+
+### 4.3 Sending
+- The worker's `push.send` task runs every 30 s. It picks up to 100
+  `PENDING` rows due now (`FOR UPDATE SKIP LOCKED`, see §5.3) and POSTs
+  them as one batch to `https://exp.host/--/api/v2/push/send`. 100 is
+  Expo's batch limit.
+- Right after a notification is committed, the API also triggers the send,
+  fire-and-forget, so pushes usually arrive within a second or two. The
+  30 s sweep is the safety net if that fails or the process restarts.
+- **Plain `fetch`** (built into Node 20), no new library. The request and
+  response formats are small and documented.
+  - Expo's official `expo-server-sdk` would also work, but it's a new
+    dependency, so it needs your OK (Q21).
+- Optional `EXPO_ACCESS_TOKEN` env var: if set, it's sent as `Authorization:
+  Bearer`. That's Expo's "enhanced push security"; turn it on once it works.
+  - It goes in `.env.example`, empty.
+- **Payload:**
+  ```json
+  { "to": "ExponentPushToken[…]", "title": "...", "body": "...",
+    "sound": "default", "channelId": "default",
+    "data": { "notificationId": "…", "relatedEntityType": "LeaveRequest", "relatedEntityId": "…" } }
+  ```
+- **Lock-screen safety:**
+  - The push `title` is the notification title.
+  - The push `body` is a **short safe text**: it never contains HR notes,
+    medical document review details or the leave reason. Example: "Your
+    sick leave document was reviewed. Open the app for details."
+  - The full body stays in-app.
+  - Each notification type has a `pushBody` in shared code.
+- **Response tickets:**
+  - `ok` → status `SENT`, store `expoTicketId`.
+  - error `DeviceNotRegistered` → disable the device, `FAILED`.
+  - Other errors or HTTP 5xx/429 → retry with backoff (1 min, 5 min,
+    30 min). After 3 attempts the row is `FAILED`.
+
+### 4.4 Receipts
+- A ticket only means "Expo accepted it". The **receipt**, available about
+  15 min later, says whether Apple/Google delivered it.
+- `push.receipts` runs every 15 min. It takes `SENT` rows sent between 15
+  min and 24 h ago, and POSTs up to 1000 ticket ids to `/push/getReceipts`.
+  - `ok` → `DELIVERED`.
+  - `DeviceNotRegistered` → disable the device (`disabledReason`).
+  - `MessageRateExceeded` → back to `PENDING` with backoff.
+  - `MismatchSenderId` / `InvalidCredentials` → `FAILED`, plus a pino
+    `error` log "push credentials misconfigured". This is a setup problem,
+    not a device problem, so the device stays enabled.
+  - No receipt after 24 h → `DELIVERED` is assumed unknown; it stays `SENT`
+    and is purged later.
+
+### 4.5 Opening a push
+- `Notifications.addNotificationResponseReceivedListener` in the root
+  layout:
+  1. marks the notification read (`PATCH /notifications/:id/read`);
+  2. navigates using the shared target helper.
+- Phase 1's `getNotificationLeaveRequestId` becomes `getNotificationTarget(n)`,
+  which returns `{ kind: "leaveRequest" | "attendance" | "siteVisit" |
+  "task", id }`.
+- On a cold start it uses `getLastNotificationResponseAsync()`.
+- Foreground pushes show as a banner, and the bell's unread-count query is
+  invalidated.
+
+### 4.6 Opt-out
+- `GET`/`PATCH /notification-settings/me`: `pushEnabled` plus
+  `pushDisabledCategories`.
+- Mobile: **Profile → Notifications** has a master switch and one switch per
+  category. Web shows the same settings for web users, but they only
+  affect their phones.
+- In-app notifications can't be turned off; they are the record.
+- If the OS permission is denied, the screen says so and links to system
+  settings.
+
+### 4.7 What you (the developer) must set up for Android push
+Push on Android **does not work in Expo Go** (it was removed in SDK 53), so
+you need an **Expo development build**. A dev build is your own installable
+APK that contains the native code (push, location) and still loads your JS
+live from `expo start`, like Expo Go does.
+
+1. **Expo account.** Sign up at expo.dev (free). On your PC: `npx eas-cli
+   login`. EAS CLI runs through `npx`, so it isn't a project dependency.
+2. **Link the project.** In `apps/mobile`, run `npx eas-cli init`. It
+   creates the project on expo.dev and writes
+   `expo.extra.eas.projectId` into `app.json`; `getExpoPushTokenAsync`
+   needs that id. Commit that change; it isn't secret.
+3. **Firebase project** (FCM is how Google delivers pushes):
+   - console.firebase.google.com → Add project (Analytics not needed).
+   - Add an **Android app** with package name `com.employeesaas.mobile`,
+     exactly as in `app.json`.
+   - Download **`google-services.json`** and put it in `apps/mobile/`.
+   - Set `"android": { "googleServicesFile": "./google-services.json" }` in
+     `app.json`.
+   - It's **gitignored**. Google says it's safe in an app, but the repo
+     doesn't need it. For EAS cloud builds, upload it with `npx eas-cli env:create --name
+     GOOGLE_SERVICES_JSON --type file --visibility secret`, and `app.config`
+     reads the path from that env var.
+4. **FCM V1 credentials for Expo's servers.** This one is a real
+   secret:
+   - Firebase → Project settings → **Service accounts** → *Generate new
+     private key*. This downloads a JSON file.
+   - Run `npx eas-cli credentials` → Android → development → **Google
+     Service Account** → *Manage your Google Service Account Key for Push
+     Notifications (FCM V1)* → upload that JSON.
+   - Then delete the downloaded file from your PC, or keep it outside the
+     repo. **Never commit it.**
+5. **Libraries** (they need your approval; installed with `npx expo
+   install` so the versions match SDK 58):
+   - `expo-notifications`
+   - `expo-device` (to check "is this a real device?")
+   - `expo-dev-client`
+   - `expo-location` (for GPS, step 2.4)
+6. **`eas.json`** gets a `development` profile with `"developmentClient":
+   true, "distribution": "internal"` and Android `"buildType": "apk"`.
+7. **Build:**
+   - Run `npx eas-cli build --profile development --platform android`.
+   - It builds in Expo's cloud. The free tier queues, and a build usually
+     takes 10–30 min.
+   - When it's done, it prints a link and a QR code.
+   - Open the link on your phone, download the APK and install it. You'll
+     need to allow "install unknown apps" for your browser.
+   - You only need to **rebuild when native things change** (a new native
+     library, `app.json` plugins or permissions). JS changes don't need a
+     rebuild.
+8. **Run:**
+   - Run `pnpm --filter @employee-saas/mobile exec expo start --dev-client`.
+   - Open the "Employee SaaS" dev build app on the phone (not Expo Go) and
+     scan the QR code, or pick the server from the list.
+   - The phone must be on the same Wi-Fi, as now.
+9. **Test on your phone:**
+   1. Log in as Alex and allow notifications. The API log should show
+      `POST /push-devices 200`.
+   2. Smoke-test the token itself. Copy it from Profile → Notifications
+      (dev builds show it under a "debug" row) into
+      **expo.dev/notifications** and send a test push. It should arrive.
+   3. Real event: put the app in the background. On web, as the manager,
+      approve Alex's leave. A push should arrive within seconds, and tapping
+      it opens the leave request.
+   4. Turn off the **Leave** category, repeat, and check that no push
+      arrives but the in-app notification still appears.
+   5. Uninstall the app, trigger another notification and wait about 15
+      min. The receipt job disables the token. Check `push_devices.disabledAt`.
+
+   **iOS** additionally needs an Apple Developer account ($99/year) and APNs
+   credentials. It's out of scope until you decide otherwise (Q14).
+- **Risk:** EAS builds a **pnpm monorepo**, and our `pnpm-workspace.yaml`
+  has custom hoisting rules for React 18/19. EAS may need extra settings to
+  install the workspace correctly. That's why step 2.9a is "get a dev build
+  running" on its own, before any push code.
+
+---
+
+## 5. The job runner (no new infrastructure)
+
+### 5.1 Recommendation: a small in-house runner on Postgres
+| Option | For | Against |
+|---|---|---|
+| **pg-boss** (a library that uses Postgres as a queue) | Retries, cron, singleton jobs, all battle-tested | A new dependency with its own `pgboss` schema and migrations. Its cron runs in **one** timezone per schedule, so per-company local times still need our own dispatcher on top. |
+| **In-house: one `job_runs` claim table + `SKIP LOCKED` for queues** ✅ | No new library. About 200 lines that are easy to read and test with a fake clock. Per-company timezones are first-class. It reuses the outbox we need for push anyway. | We own the retry/backoff code. That's acceptable for 7 jobs. |
+
+I recommend **in-house**. The hard requirement, "run at 09:00 in *each
+company's* timezone", has to be solved by our own code either way. Once
+that dispatcher exists, the remaining features pg-boss would add are small.
+If Phase 3 needs a general queue (e.g. payslip PDF generation), we can
+revisit pg-boss then (Q20).
+
+### 5.2 How it runs
+- **A separate entry point** `apps/api/src/worker.ts`, from the same
+  codebase and same Prisma client, started with `pnpm --filter api worker`.
+  - `pnpm dev` starts api + web + worker.
+  - In production it's a second process, from the same image, with a
+    different command.
+  - `JOBS_ENABLED=false` lets an instance skip jobs entirely.
+  - Keeping jobs out of the API process means a slow job never slows down
+    requests.
+- **Ticks:** the worker has a 30 s loop.
+  - Each tick runs the **queue tasks** (`push.send`) and the **scheduled
+    tasks**.
+  - For scheduled tasks, it loads active companies with their timezone and
+    settings, and asks each job "is something due for this company now?".
+- Each job is a plain module:
+  ```ts
+  interface Job {
+    name: string;                          // "attendance.dayClose"
+    module?: "attendance" | "sites" | "tasks";
+    dueRunKeys(company, now): string[];    // e.g. ["2026-11-03"] once 09:00 local has passed today
+    run(tenant, company, runKey, now): Promise<void>;  // must be idempotent
+  }
+  ```
+- `now` is always passed in, never read from the clock inside a job, so
+  Vitest can run "the day at 23:59 in Colombo" deterministically.
+- `/health` gains `worker: { lastTickAt }` (read from the latest
+  `job_runs`), so you can see if the worker is down.
+
+### 5.3 Safe with two (or more) instances
+There are three layers, and each one alone prevents duplicates of its kind:
+1. **Claim row per (job, company, runKey).**
+   - Before running, the worker does `INSERT INTO job_runs (jobName,
+     companyId, runKey, status) VALUES (…, 'RUNNING') ON CONFLICT DO
+     NOTHING RETURNING id`.
+   - Only one instance gets a row back. The others skip.
+   - Afterwards it's set to `DONE` (or `FAILED` with `lastError`).
+   - A `RUNNING` row older than 15 min is considered crashed. It can be
+     re-claimed with an atomic `UPDATE … WHERE status='RUNNING' AND
+     startedAt < now() - interval '15 min' RETURNING id`, up to 3 attempts.
+2. **Idempotent work.** Even if a job ran twice, the result is the same:
+   - **Day close:** `INSERT … ON CONFLICT (companyId, employeeId, workDate)
+     DO NOTHING` for absent rows; `UPDATE … WHERE checkOutAt IS NULL AND
+     autoClosedAt IS NULL` for auto-close.
+   - **Reminders:** a notification `dedupeKey` with `ON CONFLICT DO NOTHING`.
+3. **Row-level queue locking** for `push_messages`: `SELECT … FOR UPDATE
+   SKIP LOCKED LIMIT 100` inside a short transaction.
+   - Two senders each get *different* rows. That's what `SKIP LOCKED`
+     means: "skip rows another transaction has locked, don't wait for them".
+
+**Why not advisory locks?** A session-level advisory lock belongs to one
+DB connection. Prisma uses a connection pool, so the "unlock" can run on a
+different connection than the "lock" and silently fail. Claim rows behave
+like normal rows, which avoids that trap and also leaves a visible history.
+
+Tests:
+- Start two `runTick(now)` calls concurrently against the test DB.
+- Assert one `job_runs` row, one reminder per employee and one `ABSENT`
+  per employee.
+
+### 5.4 The jobs
+All times are company-local and computed with `zonedDateTimeToUtc`.
+**Catch-up:** if the worker was down, a job handles run keys from the last
+48 h (day close) or 2 h (reminders, since a reminder 5 hours late is
+useless and is skipped).
+
+| Job | When (company-local) | runKey | What it does | Idempotency |
+|---|---|---|---|---|
+| `attendance.dayClose` (auto-close + absent marking) | Every tick. Per employee, when `now >= scheduledEndAt(workDate) + autoCheckoutAfterMinutes`. | `workDate`, with the claim taken per company per work date at the **latest** shift end in the company. Employees whose shift ends earlier are handled by a lightweight per-employee pass on each tick (see note). | 1. **Auto-close:** records with check-in and no check-out → `status = INCOMPLETE`, `autoClosedAt = now`, flag `AUTO_CLOSED`; open site visits → `AUTO_CLOSED`; employee gets `ATTENDANCE_AUTO_CLOSED` ("You didn't check out on 3 Nov. Ask HR to correct it."). 2. **Absent marking:** active employees (joined on or before `workDate`) with no record on a working day → `ON_LEAVE` if approved leave covers it, `HOLIDAY` if it's a company holiday, else `ABSENT`. No notification for absent. | `UPDATE … WHERE checkOutAt IS NULL AND autoClosedAt IS NULL`; `INSERT … ON CONFLICT DO NOTHING`; notification `dedupeKey = AUTO_CLOSED:<recordId>` |
+| `attendance.checkinReminder` | Per employee at `scheduledStartAt + checkinReminderOffsetMinutes`, if `checkinReminderEnabled` | dedupeKey only (per employee per day) | → employee "You haven't checked in yet today". Skip if: non-working day, holiday, full-day approved leave, already checked in (office or site), no active login, inactive. | `dedupeKey = CHECKIN_REMINDER:<employeeId>:<workDate>` |
+| `leave.proofDueTomorrow` | Daily at `dailyReminderTime` | `localDate` | Requests with `proofStatus IN (MISSING, INFO_REQUIRED, REJECTED)`, status not `CANCELLED/REJECTED/REVOKED`, and proof due date (`proofDueAt` is a UTC-midnight calendar date in Phase 1) **= tomorrow** → employee "Sick leave proof due tomorrow". | `dedupeKey = PROOF_DUE_TOMORROW:<leaveRequestId>` (once per request) |
+| `leave.proofOverdue` | Daily at `dailyReminderTime` | `localDate` | Same filter, due date **< today** → every active HR user, except the requester (Phase 1 rule). One notification per request, sent once, not daily. | `dedupeKey = PROOF_OVERDUE:<leaveRequestId>:<hrUserId>` |
+| `gps.purge` | Daily 03:00 | `localDate` | NULL the coordinates older than `gpsRetentionDays`. | Pure `UPDATE … WHERE … IS NOT NULL` |
+| `push.send` | Every tick (queue) | none | §4.3 | `SKIP LOCKED` + status transitions |
+| `push.receipts` | Every 15 min (platform-wide) | `yyyy-mm-ddThh:mm` rounded to 15 | §4.4 | claim row |
+| `housekeeping` | Daily 04:00 UTC (platform-wide) | UTC date | Purge `job_runs` and `push_messages` older than 30 days; disable devices not seen for 60 days. | claim row |
+
+**Note on day close.** Different employees end at different times (night
+shifts, overrides), so a single run per company per day isn't enough. The
+pass is cheap and idempotent:
+- On every tick it handles `(employee, workDate)` pairs whose close time
+  has passed, filtered by the partial index on open records, plus a
+  "no record yet" query.
+- The `job_runs` claim per company per workDate marks the date as
+  **finished** once every employee's close time has passed, so later ticks
+  stop scanning it.
+
+**Proof reminders and HR's notes.** The Phase 1 flow for `INFO_REQUIRED`
+keeps the same `proofDueAt`. Q19 asks whether that's what you want.
+
+### 5.5 Failure handling
+- A job that throws is marked `FAILED` with a **sanitised** `lastError`
+  (error code and message only, never row data) and retried on the next
+  tick, up to 3 attempts.
+- After that it's logged at `error` and left for a human.
+- One company's failure never stops another company's jobs, because each
+  (company, job) is its own try/catch.
+
+---
+
+## 6. Reports
+- **Daily attendance** for one date: every active employee in scope, with
+  status, check-in/out, worked minutes, late minutes, flags and site.
+  - For **today**, employees with no row yet show a display-only state:
+    `NOT_CHECKED_IN` before the close time, `ON_LEAVE`/`HOLIDAY` from
+    leave/holidays. It's computed on read and not stored.
+- **Monthly summary** per employee for `YYYY-MM` in company time: present
+  (incl. late and incomplete), late, absent, on leave, holiday, incomplete
+  days, and total worked minutes.
+  - Built by one `GROUP BY` over `attendance_records` for that month's
+    date range.
+- **Site visit history:** filter by date range (max 93 days), site and
+  employee. It shows duration and flags.
+- **CSV export** for each of these:
+  - UTF-8 with BOM, so Excel opens Sinhala/Tamil names correctly.
+  - Times are in company local time, with the timezone in the header row.
+  - Generated synchronously and capped at 10,000 rows (the date-range limit
+    keeps it below that).
+  - **CSV formula-injection guard:** any cell starting with `=`, `+`, `-`,
+    `@`, tab or CR gets a leading `'`. An employee named `=HYPERLINK(...)`
+    would otherwise run as a formula in Excel. It's a small, real attack.
+  - No raw coordinates.
+- **Scope:**
+  - managers see their direct reports only;
+  - HR and Company Admin see the whole company;
+  - employees see only their own records via `/attendance/me` (no report
+    endpoints).
+- Exports are logged in `audit_logs` (`REPORT_EXPORTED`, with the filters
+  used), since they move personal data out of the system.
+- Excel/PDF come in Phase 3.
+
+---
+
+## 7. Staying compatible with the central identity migration
+The future platform will replace HR login with a central identity service,
+so one person may have one account across companies.
+
+Phase 2 is designed so that migration only has to touch a few known places:
+1. **No changes to `users`, `companies`, `refresh_tokens`, login, refresh,
+   logout or token contents.**
+   - New endpoints read only `req.auth.userId`, `companyId` and `role`, plus
+     the employee lookup that already exists.
+   - Logout cleanup for push is a separate client call (§4.2), not a change
+     to `/auth/logout`.
+2. **Work data hangs off `employees.id`**: attendance, visits, schedules,
+   task assignees. An employee is a company's HR record, and that stays
+   true whatever happens to logins.
+3. **`users.id` appears only where it's about a login**:
+   - `push_devices.userId`;
+   - `user_notification_settings.userId`;
+   - the actor columns `createdByUserId` and `correctedByUserId`;
+   - the existing `notifications.userId`.
+
+   At migration time these become "account/membership id" columns via one
+   mapping table. The full list is right here, so nothing is forgotten.
+4. **Recipients are resolved at send time** through one function,
+   `findLoginUserIdForEmployee(employeeId)`, already used in spirit by
+   Phase 1's `findCurrentApproverUserIds`. They're never cached in job
+   tables. If logins move to a central service, only that lookup changes.
+5. **`push_devices` keeps `companyId`**, and register/unregister act on
+   (token, company). When one central account can switch between companies
+   on the same phone, the token moves with the active company. The phone
+   then never gets company A's pushes while logged into company B, which
+   matters even more once one account spans companies.
+6. **Jobs never authenticate.** They work through
+   `getTenantPrisma(companyId)` per company, so they don't care how humans
+   log in.
+
+---
+
+## 8. New concepts in this phase (plain-language)
+- **Outbox pattern:** record "send this later" in the same DB transaction as
+  the change; a worker sends it. You never get "notified about something
+  that was rolled back", and you never lose a message because the network
+  failed at the wrong moment.
+- **`FOR UPDATE SKIP LOCKED`:** lets several workers take jobs from the
+  same table without picking the same row.
+- **Idempotent job:** running it twice gives the same result as once. That
+  makes retries and two servers safe.
+- **Haversine:** the formula for the distance between two
+  latitude/longitude points on a sphere (the Earth). It's accurate to well
+  under 1% at these distances.
+- **Development build:** your own build of the Expo app, with the native
+  modules you chose. You install it once, and it loads your JS from the
+  dev server like Expo Go.
