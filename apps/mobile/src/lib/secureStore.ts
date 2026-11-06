@@ -5,6 +5,7 @@ import * as SecureStore from "expo-secure-store";
 const ACCESS_TOKEN_KEY = "auth.accessToken";
 const REFRESH_TOKEN_KEY = "auth.refreshToken";
 const LAST_COMPANY_CODE_KEY = "auth.lastCompanyCode";
+const LOCATION_DISCLOSURE_KEY = "location.disclosureAcknowledged";
 
 export async function getTokens(): Promise<{ accessToken: string | null; refreshToken: string | null }> {
   const [accessToken, refreshToken] = await Promise.all([
@@ -33,4 +34,13 @@ export async function getLastCompanyCode(): Promise<string | null> {
 
 export async function setLastCompanyCode(code: string): Promise<void> {
   await SecureStore.setItemAsync(LAST_COMPANY_CODE_KEY, code);
+}
+
+// Kept per phone and through logout, like the OS permission it comes before.
+export async function hasAcknowledgedLocationDisclosure(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(LOCATION_DISCLOSURE_KEY)) === "true";
+}
+
+export async function acknowledgeLocationDisclosure(): Promise<void> {
+  await SecureStore.setItemAsync(LOCATION_DISCLOSURE_KEY, "true");
 }

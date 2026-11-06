@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { Alert } from "react-native";
+import { Alert, Linking } from "react-native";
+import * as ExpoLocation from "expo-location";
+import * as SecureStore from "expo-secure-store";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AttendanceRecordWithCoordinatesDto, AttendanceTodayDto } from "@employee-saas/shared";
 import { AttendanceCard } from "../../components/AttendanceCard";
 import { newClientRequestId } from "../../lib/attendance";
 import { AuthProvider } from "../../lib/authContext";
+import { acknowledgeLocationDisclosure } from "../../lib/secureStore";
 import { strings } from "../../strings";
 
 jest.mock("expo-router", () => {
@@ -31,6 +34,15 @@ const SCHEDULE: AttendanceTodayDto["schedule"] = {
   scheduledEndAt: "2026-11-03T11:30:00.000Z",
   lateGraceMinutes: 10,
 };
+
+/** The manual mock in __mocks__/expo-location.js. Imported, not jest.requireMock():
+ * that returns a separate copy from the one the app's code gets. */
+const Location = ExpoLocation as unknown as Record<
+  "getForegroundPermissionsAsync" | "requestForegroundPermissionsAsync" | "getCurrentPositionAsync" | "getLastKnownPositionAsync",
+  jest.Mock<(...args: unknown[]) => Promise<unknown>>
+>;
+const POSITION = { coords: { latitude: 6.9271, longitude: 79.8612, accuracy: 12 }, timestamp: Date.UTC(2026, 10, 3, 3, 30), mocked: false };
+const permission = (status: string, canAskAgain = true) => ({ status, canAskAgain });
 
 function makeRecord(overrides: Partial<AttendanceRecordWithCoordinatesDto> = {}): AttendanceRecordWithCoordinatesDto {
   return {
@@ -76,7 +88,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 let today: AttendanceTodayDto;
-let checkInBodies: { clientRequestId: string; clientTime?: string }[];
+let checkInBodies: { clientRequestId: string; clientTime?: string; location?: unknown }[];
+let checkOutBodies: { location?: unknown }[];
 let onCheckIn: () => Response;
 let onCheckOut: () => Response;
 let onToday: () => Response;
@@ -90,12 +103,15 @@ const fetchMock = jest.fn(async (url: string | URL, init: RequestInit = {}) => {
       return jsonResponse({ user: ME_USER });
     case "GET /company":
       return jsonResponse({ company: COMPANY });
+    case "GET /company/settings":
+      return jsonResponse({ settings: { enabledModules: { attendance: true }, gpsRetentionDays: 45 } });
     case "GET /attendance/me/today":
       return onToday();
     case "POST /attendance/check-in":
       checkInBodies.push(JSON.parse(init.body as string));
       return onCheckIn();
     case "POST /attendance/check-out":
+      checkOutBodies.push(JSON.parse(init.body as string));
       return onCheckOut();
     default:
       throw new Error(`Unhandled fetch in test: ${key}`);
@@ -120,10 +136,16 @@ function renderCard() {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await SecureStore.deleteItemAsync("location.disclosureAcknowledged");
   today = { workDate: "2026-11-03", schedule: SCHEDULE, record: null, nextAction: "CHECK_IN", gpsRequired: false, officeSite: null };
   checkInBodies = [];
-  onCheckIn = () => jsonResponse({ record: makeRecord() }, 201);
+  checkOutBodies = [];
+  Location.getForegroundPermissionsAsync.mockReset().mockResolvedValue(permission("granted"));
+  Location.requestForegroundPermissionsAsync.mockReset().mockResolvedValue(permission("granted"));
+  Location.getCurrentPositionAsync.mockReset().mockResolvedValue(POSITION);
+  Location.getLastKnownPositionAsync.mockReset().mockResolvedValue(null);
+  onCheckIn =() => jsonResponse({ record: makeRecord() }, 201);
   onCheckOut = () => jsonResponse({ record: makeRecord() });
   onToday = () => jsonResponse(today);
   fetchMock.mockClear();
@@ -345,6 +367,178 @@ describe("AttendanceCard", () => {
 
       expect(await screen.findByText("No internet connection, try again")).toBeTruthy();
       expect(screen.getByRole("button", { name: strings.attendance.checkOut })).toBeTruthy();
+    });
+  });
+
+  describe("location", () => {
+    const SENT_LOCATION = { latitude: 6.9271, longitude: 79.8612, accuracy: 12, mocked: false, capturedAt: "2026-11-03T03:30:00.000Z" };
+    const gpsToday = () => {
+      today = { ...today, gpsRequired: true, officeSite: { id: "s1", name: "Head Office", radiusMeters: 200 } };
+    };
+    const pressCheckIn = async () => fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkIn }));
+
+    it("reads nothing, and asks for nothing, when GPS isn't required", async () => {
+      Location.getForegroundPermissionsAsync.mockResolvedValue(permission("undetermined"));
+      await renderCard();
+
+      await pressCheckIn();
+
+      await waitFor(() => expect(checkInBodies).toHaveLength(1));
+      expect(checkInBodies[0]).not.toHaveProperty("location");
+      expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+      expect(Location.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+      expect(screen.queryByText(strings.location.disclosureTitle)).toBeNull();
+    });
+
+    it("says the location is checked, and where", async () => {
+      gpsToday();
+      await renderCard();
+
+      expect(await screen.findByText(strings.location.checkedAtSite("Head Office"))).toBeTruthy();
+    });
+
+    it("sends the location with the check-in when GPS is required", async () => {
+      gpsToday();
+      await renderCard();
+
+      await pressCheckIn();
+
+      await waitFor(() => expect(checkInBodies).toHaveLength(1));
+      expect(checkInBodies[0]!.location).toEqual(SENT_LOCATION);
+      expect(Location.getCurrentPositionAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends the location with the check-out, after the confirmation", async () => {
+      gpsToday();
+      today = { ...today, record: makeRecord(), nextAction: "CHECK_OUT" };
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      await waitFor(() => expect(checkOutBodies).toHaveLength(1));
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      expect(checkOutBodies[0]!.location).toEqual(SENT_LOCATION);
+    });
+
+    describe("the first time, before the OS prompt", () => {
+      beforeEach(() => {
+        gpsToday();
+        Location.getForegroundPermissionsAsync.mockResolvedValue(permission("undetermined"));
+      });
+
+      it("explains first, with the company's retention, and nothing has been asked or sent", async () => {
+        await renderCard();
+
+        await pressCheckIn();
+
+        expect(await screen.findByText(strings.location.disclosureTitle)).toBeTruthy();
+        expect(await screen.findByText(strings.location.retention(45))).toBeTruthy();
+        expect(screen.getByText(/never track you in the background/)).toBeTruthy();
+        expect(Location.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+        expect(checkInBodies).toHaveLength(0);
+      });
+
+      it("Not now goes back: no prompt, no location, nothing sent", async () => {
+        await renderCard();
+        await pressCheckIn();
+
+        fireEvent.press(await screen.findByRole("button", { name: strings.location.notNow }));
+
+        await waitFor(() => expect(screen.queryByText(strings.location.disclosureTitle)).toBeNull());
+        expect(Location.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+        expect(checkInBodies).toHaveLength(0);
+        expect(screen.getByRole("button", { name: strings.attendance.checkIn })).toBeTruthy();
+      });
+
+      it("Continue opens the OS prompt, then checks in with the location", async () => {
+        await renderCard();
+        await pressCheckIn();
+
+        fireEvent.press(await screen.findByRole("button", { name: strings.location.continue }));
+
+        await waitFor(() => expect(checkInBodies).toHaveLength(1));
+        expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+        expect(checkInBodies[0]!.location).toEqual(SENT_LOCATION);
+      });
+
+      it("is shown only once", async () => {
+        onCheckIn = () => jsonResponse({ error: { code: "OUTSIDE_SITE_RADIUS", message: "Too far" } }, 422);
+        await renderCard();
+        await pressCheckIn();
+        fireEvent.press(await screen.findByRole("button", { name: strings.location.continue }));
+        await waitFor(() => expect(checkInBodies).toHaveLength(1));
+        await screen.findByRole("button", { name: strings.attendance.checkIn });
+
+        await pressCheckIn();
+
+        await waitFor(() => expect(checkInBodies).toHaveLength(2));
+        expect(screen.queryByText(strings.location.disclosureTitle)).toBeNull();
+      });
+
+      it("isn't shown if location is already allowed", async () => {
+        Location.getForegroundPermissionsAsync.mockResolvedValue(permission("granted"));
+        await renderCard();
+
+        await pressCheckIn();
+
+        await waitFor(() => expect(checkInBodies).toHaveLength(1));
+        expect(screen.queryByText(strings.location.disclosureTitle)).toBeNull();
+      });
+    });
+
+    it("a refused permission still asks the server, and the refusal offers a way to settings", async () => {
+      gpsToday();
+      Location.getForegroundPermissionsAsync.mockResolvedValue(permission("denied", false));
+      await acknowledgeLocationDisclosure();
+      const openSettings = jest.spyOn(Linking, "openSettings").mockResolvedValue();
+      onCheckIn = () => jsonResponse({ error: { code: "LOCATION_REQUIRED", message: "Needed" } }, 422);
+      await renderCard();
+
+      await pressCheckIn();
+
+      expect(await screen.findByText(strings.errors.LOCATION_REQUIRED)).toBeTruthy();
+      expect(checkInBodies[0]).not.toHaveProperty("location");
+      expect(Location.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+
+      fireEvent.press(screen.getByRole("button", { name: strings.location.openSettings }));
+      expect(openSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it("a refused permission doesn't stop a check-out", async () => {
+      gpsToday();
+      today = { ...today, record: makeRecord(), nextAction: "CHECK_OUT" };
+      Location.getForegroundPermissionsAsync.mockResolvedValue(permission("denied", false));
+      await acknowledgeLocationDisclosure();
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      await waitFor(() => expect(checkOutBodies).toHaveLength(1));
+      expect(checkOutBodies[0]).not.toHaveProperty("location");
+    });
+
+    it.each([
+      [850, "You are 850 m from Head Office."],
+      [12300, "You are 12.3 km from Head Office."],
+    ])("%d m outside the radius says how far, and from where", async (distanceM, message) => {
+      gpsToday();
+      onCheckIn = () => jsonResponse({ error: { code: "OUTSIDE_SITE_RADIUS", message: "Too far", details: { distanceM, radiusM: 200, siteName: "Head Office" } } }, 422);
+      await renderCard();
+
+      await pressCheckIn();
+
+      expect(await screen.findByText(message)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: strings.location.openSettings })).toBeNull();
+    });
+
+    it("a mock location says so", async () => {
+      gpsToday();
+      onCheckIn = () => jsonResponse({ error: { code: "MOCK_LOCATION_DETECTED", message: "Mock" } }, 422);
+      await renderCard();
+
+      await pressCheckIn();
+
+      expect(await screen.findByText(strings.errors.MOCK_LOCATION_DETECTED)).toBeTruthy();
     });
   });
 

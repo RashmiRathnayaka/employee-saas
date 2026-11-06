@@ -79,6 +79,30 @@ export const strings = {
     noHistory: "No attendance yet",
     noCheckOut: "no check-out",
   },
+  location: {
+    privacyTitle: "Location & privacy",
+    disclosureTitle: "Why we ask for your location",
+    disclosureIntro: "Your company requires location verification when you check in or out at some work sites.",
+    disclosurePoints: [
+      "We read your location once, only when you tap Check in or Check out. We never track you in the background.",
+      "We store the position, its accuracy, and how far you were from the site.",
+      "Your manager sees whether you were within the site area and how far away you were. HR can also see the exact position.",
+    ],
+    retention: (days: number | null) =>
+      `Exact positions are deleted after ${days === null ? "the period your company has set" : `${days} days`}. Whether you were inside the area is kept with your attendance record.`,
+    continue: "Continue",
+    notNow: "Not now",
+    openSettings: "Open settings",
+    permissionLabel: "Location permission",
+    permission: {
+      GRANTED: "Allowed while using the app",
+      DENIED: "Not allowed",
+      NOT_ASKED: "Not asked yet",
+    },
+    checkedAtSite: (siteName: string) => `Your location is checked at ${siteName}.`,
+    checkedAtOffice: "Your location is checked at your office.",
+    outsideRadius: (distance: string, siteName: string) => `You are ${distance} from ${siteName}.`,
+  },
   attendanceStatus: {
     PRESENT: "Present",
     LATE: "Late",
@@ -223,6 +247,9 @@ export const strings = {
     NOT_CHECKED_IN: "You haven't checked in yet.",
     DAY_ALREADY_CLOSED: "Your day was closed automatically. Ask HR to correct it.",
     MODULE_DISABLED: "Attendance isn't switched on for your company.",
+    LOCATION_REQUIRED: "Your location is needed to check in here. Turn on location and allow it for this app, then try again.",
+    OUTSIDE_SITE_RADIUS: "You're too far from the site to check in.",
+    MOCK_LOCATION_DETECTED: "Your phone is reporting a fake location. Turn off any mock location app, then try again.",
     network: "Could not reach the server. Check your Wi-Fi and the API URL.",
   },
 };

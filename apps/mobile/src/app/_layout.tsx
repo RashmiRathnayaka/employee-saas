@@ -38,6 +38,10 @@ function RootNavigator() {
         name="notifications"
         options={{ headerShown: true, title: strings.notifications.title, headerTintColor: primaryColor }}
       />
+      <Stack.Screen
+        name="location-privacy"
+        options={{ headerShown: true, title: strings.location.privacyTitle, headerTintColor: primaryColor }}
+      />
     </Stack>
   );
 }

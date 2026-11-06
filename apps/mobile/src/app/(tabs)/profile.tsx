@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { router } from "expo-router";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDate, type EmployeeDto } from "@employee-saas/shared";
@@ -123,6 +124,8 @@ export default function ProfileScreen() {
             </>
           )}
         </Card>
+
+        <Button title={strings.location.privacyTitle} variant="secondary" onPress={() => router.push("/location-privacy")} />
       </ScrollView>
     </Screen>
   );

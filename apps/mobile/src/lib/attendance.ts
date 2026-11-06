@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  formatDistance,
   isModuleEnabled,
   type AttendanceRecordWithCoordinatesDto,
   type AttendanceTodayDto,
@@ -11,21 +12,26 @@ import {
 import { api, ApiClientError } from "./apiClient";
 import { useAuth } from "./authContext";
 import { getErrorMessage } from "./errorMapping";
+import { readLocationForCheck } from "./location";
 import { strings } from "../strings";
 
 const HISTORY_PAGE_SIZE = 20;
 const ATTENDANCE_KEY = "attendance";
 
-/** The company's module switches. Screens hide what's off; the API enforces it. */
-export function useIsModuleEnabled(module: CompanyModule): boolean {
+export function useCompanySettings() {
   const { status } = useAuth();
-  const { data } = useQuery({
+  return useQuery({
     queryKey: ["company-settings"],
     queryFn: () => api.get<{ settings: CompanySettingsDto }>("/company/settings"),
     enabled: status === "authenticated",
     staleTime: 60 * 1000,
     select: (res) => res.settings,
   });
+}
+
+/** The company's module switches. Screens hide what's off; the API enforces it. */
+export function useIsModuleEnabled(module: CompanyModule): boolean {
+  const { data } = useCompanySettings();
   return isModuleEnabled(data, module);
 }
 
@@ -71,7 +77,27 @@ function reachedNoServer(error: unknown): boolean {
 
 /** What to tell the employee. Attendance is online only, and says so plainly. */
 export function getAttendanceErrorMessage(error: unknown): string {
-  return reachedNoServer(error) ? strings.attendance.offline : getErrorMessage(error);
+  if (reachedNoServer(error)) return strings.attendance.offline;
+  if (error instanceof ApiClientError && error.code === "OUTSIDE_SITE_RADIUS") {
+    const { distanceM, siteName } = (error.details ?? {}) as { distanceM?: unknown; siteName?: unknown };
+    if (typeof distanceM === "number" && typeof siteName === "string") {
+      return strings.location.outsideRadius(formatDistance(distanceM), siteName);
+    }
+  }
+  return getErrorMessage(error);
+}
+
+/** The server refused for lack of a location, which the employee can fix in settings. */
+export function isLocationRequiredError(error: unknown): boolean {
+  return error instanceof ApiClientError && error.code === "LOCATION_REQUIRED";
+}
+
+/** Whether this tap should read the phone's location: the server's `gpsRequired`. */
+type TapOptions = { gpsRequired: boolean };
+
+async function locationFields({ gpsRequired }: TapOptions) {
+  const location = gpsRequired ? await readLocationForCheck() : null;
+  return location ? { location } : {};
 }
 
 /**
@@ -87,7 +113,8 @@ export function getAttendanceErrorMessage(error: unknown): string {
  * back, rather than an "already checked in" error for a check-in that worked.
  *
  * Each mutation stays pending until the card has refreshed, so a double tap can't
- * land on the "Check out" button that replaces "Check in".
+ * land on the "Check out" button that replaces "Check in". Reading the location is
+ * part of the mutation for the same reason: it can take up to 15 seconds.
  */
 export function useAttendanceActions() {
   const queryClient = useQueryClient();
@@ -96,10 +123,12 @@ export function useAttendanceActions() {
 
   const checkIn = useMutation({
     networkMode: "always",
-    mutationFn: () => {
+    mutationFn: async (tap: TapOptions) => {
+      const location = await locationFields(tap);
       pendingCheckInId.current ??= newClientRequestId();
       return api.post<{ record: AttendanceRecordWithCoordinatesDto }>("/attendance/check-in", {
         clientRequestId: pendingCheckInId.current,
+        ...location,
         clientTime: new Date().toISOString(),
       });
     },
@@ -117,10 +146,13 @@ export function useAttendanceActions() {
 
   const checkOut = useMutation({
     networkMode: "always",
-    mutationFn: () =>
-      api.post<{ record: AttendanceRecordWithCoordinatesDto }>("/attendance/check-out", {
+    mutationFn: async (tap: TapOptions) => {
+      const location = await locationFields(tap);
+      return api.post<{ record: AttendanceRecordWithCoordinatesDto }>("/attendance/check-out", {
+        ...location,
         clientTime: new Date().toISOString(),
-      }),
+      });
+    },
     onSuccess: refresh,
     onError: (error) => (reachedNoServer(error) ? undefined : refresh()),
   });
