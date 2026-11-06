@@ -66,34 +66,38 @@ export type CheckInRequest = z.infer<typeof CheckInRequestSchema>;
 export const CheckOutRequestSchema = z.object({ location: LocationSchema.optional(), clientTime });
 export type CheckOutRequest = z.infer<typeof CheckOutRequestSchema>;
 
-const isoDate = z
+/** A date in a list's query string. */
+export const isoDateParam = z
   .string()
   .trim()
   .refine(isIsoDate, "Use a date like 2026-11-03");
 
 export const ATTENDANCE_MAX_RANGE_DAYS = 93;
 
+/** The `from`/`to` rule shared by the attendance and site visit lists. */
+export function refineDateRange({ from, to }: { from?: string | undefined; to?: string | undefined }, ctx: z.RefinementCtx): void {
+  // Runs even if a date above failed, and daysBetween throws on a malformed one.
+  if (!from || !to || !isIsoDate(from) || !isIsoDate(to)) return;
+  const days = daysBetweenIsoDates(from, to);
+  if (days < 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["to"], message: "The end date is before the start date" });
+  } else if (days > ATTENDANCE_MAX_RANGE_DAYS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["to"],
+      message: `Choose a range of ${ATTENDANCE_MAX_RANGE_DAYS} days or less`,
+    });
+  }
+}
+
 export const AttendanceListQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).default(1),
     pageSize: z.coerce.number().int().min(1).max(100).default(20),
-    from: isoDate.optional(),
-    to: isoDate.optional(),
+    from: isoDateParam.optional(),
+    to: isoDateParam.optional(),
   })
-  .superRefine(({ from, to }, ctx) => {
-    // Runs even if a date above failed, and daysBetween throws on a malformed one.
-    if (!from || !to || !isIsoDate(from) || !isIsoDate(to)) return;
-    const days = daysBetweenIsoDates(from, to);
-    if (days < 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["to"], message: "The end date is before the start date" });
-    } else if (days > ATTENDANCE_MAX_RANGE_DAYS) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["to"],
-        message: `Choose a range of ${ATTENDANCE_MAX_RANGE_DAYS} days or less`,
-      });
-    }
-  });
+  .superRefine(refineDateRange);
 export type AttendanceListQuery = z.infer<typeof AttendanceListQuerySchema>;
 
 /** What everyone allowed to see a record gets, managers included. It has "were
@@ -159,5 +163,7 @@ export const AttendanceTodaySchema = z.object({
   /** The office that tap is checked against. Null if there's none, or several: the
    * server can only pick the nearest once it has the location. No coordinates. */
   officeSite: z.object({ id: z.string(), name: z.string(), radiusMeters: z.number() }).nullable(),
+  /** The site visit a day check-out would also close (§1.6). Null with `sites` off. */
+  openVisit: z.object({ id: z.string(), siteName: z.string(), checkInAt: z.string() }).nullable(),
 });
 export type AttendanceTodayDto = z.infer<typeof AttendanceTodaySchema>;

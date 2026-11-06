@@ -11,6 +11,7 @@ export const NOTIFICATION_TYPES = [
   "LEAVE_REQUEST_REVOKED", // -> employee
   "LEAVE_REQUEST_CANCELLED", // employee cancelled -> current approver(s); system cancelled (deactivation) -> employee
   "LEAVE_DOCUMENT_REVIEWED", // -> employee (includes the HR note)
+  "SITE_CHECKED_IN", // -> the employee's manager
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;

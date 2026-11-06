@@ -6,6 +6,7 @@ export * from "./pagination.js";
 export * from "./company.js";
 export * from "./sites.js";
 export * from "./attendance.js";
+export * from "./siteVisits.js";
 export * from "./users.js";
 export * from "./departments.js";
 export * from "./designations.js";
