@@ -25,6 +25,8 @@ import { LeaveRequestDetailPage } from "./routes/LeaveRequestDetailPage";
 import { CompanySettingsPage } from "./routes/CompanySettingsPage";
 import { SitesPage } from "./routes/SitesPage";
 import { SiteVisitsPage } from "./routes/SiteVisitsPage";
+import { AttendancePage } from "./routes/AttendancePage";
+import { AttendanceRecordPage } from "./routes/AttendanceRecordPage";
 import { CompaniesPage } from "./routes/CompaniesPage";
 import { NotAllowedPage } from "./routes/NotAllowedPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
@@ -49,6 +51,7 @@ export function App() {
                       <Route path="/employees" element={<EmployeesListPage />} />
                       <Route path="/employees/:id" element={<EmployeeDetailPage />} />
                       <Route path="/site-visits" element={<SiteVisitsPage />} />
+                      <Route path="/attendance" element={<AttendancePage />} />
                     </Route>
                     <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR"]} />}>
                       <Route path="/employees/new" element={<CreateEmployeePage />} />
@@ -66,6 +69,8 @@ export function App() {
                     <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR", "MANAGER", "EMPLOYEE"]} />}>
                       <Route path="/my-leave" element={<MyLeavePage />} />
                       <Route path="/leave-requests/:id" element={<LeaveRequestDetailPage />} />
+                      {/* An employee can reach their own, from a correction notification. The API decides. */}
+                      <Route path="/attendance/:id" element={<AttendanceRecordPage />} />
                       <Route path="/notifications" element={<NotificationsPage />} />
                     </Route>
                     <Route element={<RequireRole roles={["COMPANY_ADMIN"]} />}>

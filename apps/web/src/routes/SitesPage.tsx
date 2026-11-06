@@ -3,7 +3,7 @@ import type { z } from "zod";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   CreateSiteRequestSchema,
   type CompanySettingsDto,
@@ -21,6 +21,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
+import { MapLink } from "../components/MapLink";
 import { Pagination } from "../components/Pagination";
 import { StatusBadge } from "../components/StatusBadge";
 import { api, ApiClientError } from "../lib/apiClient";
@@ -35,23 +36,6 @@ const PAGE_SIZE = 20;
 // z.input because the schema turns an emptied address into null on the way out.
 type SiteFormValues = z.input<typeof CreateSiteRequestSchema>;
 
-function googleMapsUrl(latitude: number, longitude: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
-}
-
-function MapLink({ latitude, longitude, label }: { latitude: number; longitude: number; label: string }) {
-  return (
-    <a
-      href={googleMapsUrl(latitude, longitude)}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 text-[var(--color-primary)] hover:underline"
-    >
-      {label}
-      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-    </a>
-  );
-}
 
 export function SitesPage() {
   const toast = useToast();

@@ -11,6 +11,7 @@ import {
   type SiteVisitDto,
   type SiteVisitFlag,
 } from "@employee-saas/shared";
+import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -20,6 +21,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Pagination } from "../components/Pagination";
 import { StatusBadge } from "../components/StatusBadge";
+import { VisitDetailDialog } from "../components/VisitDetailDialog";
 import { api, ApiClientError } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
 import { useCompany } from "../lib/companyContext";
@@ -68,7 +70,28 @@ function RowsSkeleton() {
   );
 }
 
-function OnSiteNow({ endpoint }: { endpoint: string }) {
+/** Only for those allowed exact positions: a manager's rows have no way in to the detail. */
+function DetailsButton({ visit, onOpen }: { visit: SiteVisitDto; onOpen?: ((visitId: string) => void) | undefined }) {
+  if (!onOpen) return null;
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      aria-label={`${strings.siteVisits.details}: ${visit.employeeName}, ${visit.siteName}`}
+      onClick={() => onOpen(visit.id)}
+    >
+      {strings.siteVisits.details}
+    </Button>
+  );
+}
+
+function CorrectedChip({ visit }: { visit: SiteVisitDto }) {
+  if (!visit.isCorrected) return null;
+  return <p className="mt-1 text-xs font-medium text-amber-700">{strings.siteVisits.corrected}</p>;
+}
+
+function OnSiteNow({ endpoint, onOpen }: { endpoint: string; onOpen?: ((visitId: string) => void) | undefined }) {
   const { timezone } = useCompany();
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["site-visits", endpoint, "open"],
@@ -108,7 +131,8 @@ function OnSiteNow({ endpoint }: { endpoint: string }) {
                   <th className="py-2 pr-4">{strings.siteVisits.since}</th>
                   <th className="py-2 pr-4">{strings.siteVisits.timeThere}</th>
                   <th className="py-2 pr-4">{strings.siteVisits.location}</th>
-                  <th className="py-2">{strings.siteVisits.flagsTitle}</th>
+                  <th className="py-2 pr-4">{strings.siteVisits.flagsTitle}</th>
+                  {onOpen ? <th className="py-2" /> : null}
                 </tr>
               </thead>
               <tbody>
@@ -116,6 +140,7 @@ function OnSiteNow({ endpoint }: { endpoint: string }) {
                   <tr key={visit.id} className="border-b border-slate-100">
                     <td className="py-2.5 pr-4">
                       <Person visit={visit} />
+                      <CorrectedChip visit={visit} />
                     </td>
                     <td className="py-2.5 pr-4 text-slate-600">{visit.siteName}</td>
                     <td className="py-2.5 pr-4 text-slate-600">
@@ -125,9 +150,14 @@ function OnSiteNow({ endpoint }: { endpoint: string }) {
                       {formatDuration(Math.max(0, Math.floor((now - new Date(visit.checkInAt).getTime()) / 60_000)))}
                     </td>
                     <td className="py-2.5 pr-4 text-slate-600">{locationText(visit.checkInDistanceM, visit.checkInWithinRadius)}</td>
-                    <td className="py-2.5">
+                    <td className="py-2.5 pr-4">
                       <Flags flags={visit.flags} />
                     </td>
+                    {onOpen ? (
+                      <td className="py-2.5 text-right">
+                        <DetailsButton visit={visit} onOpen={onOpen} />
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -139,7 +169,7 @@ function OnSiteNow({ endpoint }: { endpoint: string }) {
   );
 }
 
-function History({ endpoint }: { endpoint: string }) {
+function History({ endpoint, onOpen }: { endpoint: string; onOpen?: ((visitId: string) => void) | undefined }) {
   const { timezone } = useCompany();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -248,7 +278,8 @@ function History({ endpoint }: { endpoint: string }) {
                     <th className="py-2 pr-4">{strings.siteVisits.duration}</th>
                     <th className="py-2 pr-4">{strings.siteVisits.location}</th>
                     <th className="py-2 pr-4">{strings.table.status}</th>
-                    <th className="py-2">{strings.siteVisits.flagsTitle}</th>
+                    <th className="py-2 pr-4">{strings.siteVisits.flagsTitle}</th>
+                    {onOpen ? <th className="py-2" /> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -256,6 +287,7 @@ function History({ endpoint }: { endpoint: string }) {
                     <tr key={visit.id} className="border-b border-slate-100">
                       <td className="py-2.5 pr-4">
                         <Person visit={visit} />
+                        <CorrectedChip visit={visit} />
                       </td>
                       <td className="py-2.5 pr-4 text-slate-600">{visit.siteName}</td>
                       <td className="py-2.5 pr-4 text-slate-600">{formatDate(visit.workDate, timezone)}</td>
@@ -268,9 +300,14 @@ function History({ endpoint }: { endpoint: string }) {
                       <td className="py-2.5 pr-4">
                         <StatusBadge status={visit.status} />
                       </td>
-                      <td className="py-2.5">
+                      <td className="py-2.5 pr-4">
                         <Flags flags={visit.flags} />
                       </td>
+                      {onOpen ? (
+                        <td className="py-2.5 text-right">
+                          <DetailsButton visit={visit} onOpen={onOpen} />
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
@@ -289,6 +326,10 @@ function History({ endpoint }: { endpoint: string }) {
 export function SiteVisitsPage() {
   const { user } = useAuth();
   const endpoint = user?.role === "MANAGER" ? "/site-visits/team" : "/site-visits";
+  // Exact positions are for HR and Company Admin (Q7). A manager never gets a way in.
+  const seesPositions = user?.role === "HR" || user?.role === "COMPANY_ADMIN";
+  const [openVisitId, setOpenVisitId] = useState<string | null>(null);
+  const onOpen = seesPositions ? setOpenVisitId : undefined;
 
   // Asked separately from the lists so that a switched-off module shows one message.
   const moduleCheck = useQuery({
@@ -314,8 +355,9 @@ export function SiteVisitsPage() {
 
   return (
     <>
-      <OnSiteNow endpoint={endpoint} />
-      <History endpoint={endpoint} />
+      <OnSiteNow endpoint={endpoint} onOpen={onOpen} />
+      <History endpoint={endpoint} onOpen={onOpen} />
+      {seesPositions && openVisitId ? <VisitDetailDialog visitId={openVisitId} onClose={() => setOpenVisitId(null)} /> : null}
     </>
   );
 }

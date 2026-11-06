@@ -32,6 +32,16 @@ describe("visibleNavItems", () => {
     expect(paths(role, { enabledModules: { sites: true } })).not.toContain("/site-visits");
   });
 
+  it.each(["COMPANY_ADMIN", "HR", "MANAGER"] as const)("shows Attendance to %s while the module is on", (role) => {
+    expect(paths(role, { enabledModules: { attendance: true } })).toContain("/attendance");
+    expect(paths(role, { enabledModules: { sites: true } })).not.toContain("/attendance");
+    expect(paths(role, undefined)).not.toContain("/attendance");
+  });
+
+  it.each(["EMPLOYEE", "SUPER_ADMIN"] as const)("never shows Attendance to %s", (role) => {
+    expect(paths(role, { enabledModules: { attendance: true } })).not.toContain("/attendance");
+  });
+
   it("still shows items that have no module, with or without settings", () => {
     expect(paths("HR", undefined)).toContain("/departments");
     expect(paths("HR", { enabledModules: {} })).toContain("/departments");

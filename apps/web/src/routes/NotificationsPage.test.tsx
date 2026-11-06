@@ -98,6 +98,35 @@ describe("opening a notification", () => {
 
     expect(screen.getByTestId("location").textContent).toBe("/site-visits");
   });
+
+  it.each([
+    ["a corrected record opens it", "AttendanceRecord", "a1", "/attendance/a1"],
+    ["a corrected visit is the reader's own, and stays put", "SiteVisit", "v1", "/"],
+  ])("%s", async (_name, relatedEntityType, relatedEntityId, path) => {
+    const corrected: NotificationDto = {
+      ...row(1, "2026-01-05T19:00:00.000Z"),
+      type: "ATTENDANCE_CORRECTED",
+      title: "Corrected",
+      relatedEntityType,
+      relatedEntityId,
+    };
+    server.use(http.get("/api/v1/notifications", () => HttpResponse.json({ data: [corrected], page: 1, pageSize: 20, total: 1 })));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <AuthProvider>
+            <NotificationsPage />
+            <LocationProbe />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await userEvent.setup().click(await screen.findByText("Corrected"));
+
+    expect(screen.getByTestId("location").textContent).toBe(path);
+  });
 });
 
 describe("NotificationsPage", () => {

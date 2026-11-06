@@ -130,6 +130,8 @@ export const api = {
     apiRequest<T>(path, { method: "POST", body, signal }),
   patch: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     apiRequest<T>(path, { method: "PATCH", body, signal }),
+  put: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
+    apiRequest<T>(path, { method: "PUT", body, signal }),
   delete: <T>(path: string, signal?: AbortSignal) => apiRequest<T>(path, { method: "DELETE", signal }),
   upload: <T>(path: string, formData: FormData, signal?: AbortSignal) =>
     apiRequest<T>(path, { method: "POST", body: formData, isFormData: true, signal }),

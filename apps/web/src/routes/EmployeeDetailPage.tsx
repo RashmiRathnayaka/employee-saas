@@ -25,6 +25,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TempPasswordDialog } from "../components/TempPasswordDialog";
 import { AdjustBalanceDialog } from "../components/AdjustBalanceDialog";
+import { EmployeeScheduleCard } from "../components/EmployeeScheduleCard";
 import { api } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
 import { useCompany } from "../lib/companyContext";
@@ -178,6 +179,9 @@ export function EmployeeDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* A manager reads their team's. Their own isn't reachable by id: it's /schedule/me. */}
+      {canManage || (user?.role === "MANAGER" && !isSelf) ? <EmployeeScheduleCard employeeId={employee.id} canEdit={canManage} /> : null}
 
       <Card>
         <CardHeader>

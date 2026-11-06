@@ -1,8 +1,8 @@
 import { cn } from "../lib/cn";
 
-const ACTIVE_VALUES = new Set(["ACTIVE", "APPROVED", "ACCEPTED"]);
-const WARN_VALUES = new Set(["PENDING_MANAGER", "PENDING_HR", "MISSING", "PENDING_REVIEW", "INFO_REQUIRED"]);
-const NEGATIVE_VALUES = new Set(["DEACTIVATED", "INACTIVE", "REJECTED", "CANCELLED", "REVOKED", "SUSPENDED"]);
+const ACTIVE_VALUES = new Set(["ACTIVE", "APPROVED", "ACCEPTED", "PRESENT"]);
+const WARN_VALUES = new Set(["PENDING_MANAGER", "PENDING_HR", "MISSING", "PENDING_REVIEW", "INFO_REQUIRED", "LATE", "INCOMPLETE"]);
+const NEGATIVE_VALUES = new Set(["DEACTIVATED", "INACTIVE", "REJECTED", "CANCELLED", "REVOKED", "SUSPENDED", "ABSENT"]);
 
 export function StatusBadge({ status }: { status: string }) {
   return (

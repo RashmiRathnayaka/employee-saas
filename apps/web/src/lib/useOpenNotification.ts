@@ -14,7 +14,9 @@ export function useOpenNotification() {
     if (notification.readAt === null) markRead.mutate(notification.id);
     const target = getNotificationTarget(notification);
     if (target?.kind === "leaveRequest") navigate(`/leave-requests/${target.id}`);
-    // Only managers get these, and the page's "on site now" is where the visit shows.
-    if (target?.kind === "siteVisit") navigate("/site-visits");
+    if (target?.kind === "attendance") navigate(`/attendance/${target.id}`);
+    // Only managers get these, and the page's "on site now" is where the visit shows. A
+    // corrected visit is the reader's own, and the web has no page listing those.
+    if (target?.kind === "siteVisit" && notification.type === "SITE_CHECKED_IN") navigate("/site-visits");
   };
 }
