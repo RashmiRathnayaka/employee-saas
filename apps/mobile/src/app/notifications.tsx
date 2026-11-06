@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { Redirect, router } from "expo-router";
-import { formatDateTime, getNotificationLeaveRequestId, type NotificationDto } from "@employee-saas/shared";
+import { formatDateTime, getNotificationTarget, type NotificationDto } from "@employee-saas/shared";
 import { Screen } from "../components/ui/Screen";
 import { Button } from "../components/ui/Button";
 import { EmptyView, ErrorView, LoadingView } from "../components/ui/StateViews";
@@ -34,8 +34,8 @@ export default function NotificationsScreen() {
    * navigation doesn't wait for the PATCH, so a slow network never blocks it. */
   function openNotification(n: NotificationDto) {
     if (n.readAt === null) markRead.mutate(n.id);
-    const leaveRequestId = getNotificationLeaveRequestId(n);
-    if (leaveRequestId) router.push(`/leave/${leaveRequestId}`);
+    const target = getNotificationTarget(n);
+    if (target?.kind === "leaveRequest") router.push(`/leave/${target.id}`);
   }
 
   async function onRefresh() {

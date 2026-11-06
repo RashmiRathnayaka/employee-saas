@@ -106,6 +106,133 @@ export function daysBetweenIsoDates(from: string, to: string): number {
   return Math.round((isoDateToUtcDate(to).getTime() - isoDateToUtcDate(from).getTime()) / 86_400_000);
 }
 
+const TIME_OF_DAY_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const ONE_DAY_MS = 86_400_000;
+
+// Building an Intl.DateTimeFormat is slow, and a job may convert thousands
+// of times per tick, so keep one per timezone.
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getOffsetFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = offsetFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+    offsetFormatters.set(timezone, formatter);
+  }
+  return formatter;
+}
+
+/** How far ahead of UTC `timezone` is at this instant, in ms (Colombo is
+ * +19,800,000). It's worked out by asking Intl what the wall clock shows
+ * there, then reading that wall clock as if it were UTC. */
+function timezoneOffsetMs(timezone: string, instantMs: number): number {
+  const fields: Record<string, number> = {};
+  for (const part of getOffsetFormatter(timezone).formatToParts(new Date(instantMs))) {
+    if (part.type !== "literal") fields[part.type] = Number(part.value);
+  }
+  const wallClockAsUtc = Date.UTC(
+    fields.year!,
+    fields.month! - 1,
+    fields.day!,
+    fields.hour! % 24,
+    fields.minute!,
+    fields.second!,
+  );
+  return wallClockAsUtc - Math.floor(instantMs / 1000) * 1000;
+}
+
+/**
+ * "2026-11-03" + "09:00" on the wall clock in `timezone` -> the exact instant
+ * that is, as a Date. This is the inverse of showing a timestamp in a
+ * timezone. The result doesn't depend on the server's or device's own TZ.
+ *
+ * A timezone's offset can change on the days clocks change, so the offsets a
+ * day before and a day after are both tried:
+ * - **A time that happens twice** (clocks go back): the first one.
+ * - **A time that doesn't exist** (clocks jump forward): moved forward by the
+ *   size of the jump, so London's 01:30 on the spring change means 02:30 BST.
+ *
+ * Throws on a malformed or impossible date or time, or an unknown timezone.
+ */
+export function zonedDateTimeToUtc(isoDate: string, time: string, timezone: string): Date {
+  const { year, month, day } = parseIsoDateParts(isoDate);
+  const timeMatch = TIME_OF_DAY_RE.exec(time);
+  if (!timeMatch) throw new Error(`Expected an HH:mm time, got "${time}"`);
+  // Date.UTC rolls 30 Feb over to March without complaint, so catch it here.
+  if (utcDateToIsoDate(isoDateToUtcDate(isoDate)) !== isoDate) {
+    throw new Error(`"${isoDate}" is not a real calendar date`);
+  }
+
+  const wallClockAsUtc = Date.UTC(year, month - 1, day, Number(timeMatch[1]), Number(timeMatch[2]));
+  const offsetBefore = timezoneOffsetMs(timezone, wallClockAsUtc - ONE_DAY_MS);
+  const offsetAfter = timezoneOffsetMs(timezone, wallClockAsUtc + ONE_DAY_MS);
+
+  // The larger offset gives the earlier instant, so trying it first is what
+  // picks "the first one" when a time happens twice.
+  for (const offset of [Math.max(offsetBefore, offsetAfter), Math.min(offsetBefore, offsetAfter)]) {
+    const candidate = wallClockAsUtc - offset;
+    if (timezoneOffsetMs(timezone, candidate) === offset) return new Date(candidate);
+  }
+  // Neither offset is in force at that wall-clock time, so it doesn't exist.
+  // Reading it with the old offset lands the same distance past the jump.
+  return new Date(wallClockAsUtc - offsetBefore);
+}
+
+/** A shift's start and end instants for the date it starts on. An end time at
+ * or before the start time means the shift crosses midnight, so it ends on
+ * the next calendar day. */
+export function getShiftInstants(params: {
+  workDate: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
+}): { scheduledStartAt: Date; scheduledEndAt: Date } {
+  const { workDate, startTime, endTime, timezone } = params;
+  const endDate = endTime <= startTime ? addDaysToIsoDate(workDate, 1) : workDate;
+  return {
+    scheduledStartAt: zonedDateTimeToUtc(workDate, startTime, timezone),
+    scheduledEndAt: zonedDateTimeToUtc(endDate, endTime, timezone),
+  };
+}
+
+/**
+ * The work date a check-in at `now` belongs to: the company-local date the
+ * shift *starts* on (architecture-phase2 §1.3). A check-in at 00:20 during a
+ * 22:00-06:00 shift belongs to yesterday.
+ *
+ * `previousDaySchedule` is the employee's effective schedule for the day
+ * before today (company time). Pass null if yesterday was a non-working day,
+ * since no shift from it can still be running. The caller looks it up, using
+ * `todayInTimezone` and `addDaysToIsoDate`, so this stays pure and testable.
+ *
+ * The end of the shift is the cut-off, exclusive. This answers "which shift is
+ * a *check-in* for", so it isn't how to find the record to check out of: a
+ * night worker checking out late, after 06:00, gets today's date here.
+ */
+export function getWorkDate(params: {
+  now: Date;
+  timezone: string;
+  previousDaySchedule: { startTime: string; endTime: string } | null;
+}): string {
+  const { now, timezone, previousDaySchedule } = params;
+  const today = todayInTimezone(timezone, now);
+  if (previousDaySchedule && previousDaySchedule.endTime <= previousDaySchedule.startTime) {
+    const yesterday = addDaysToIsoDate(today, -1);
+    const { scheduledEndAt } = getShiftInstants({ workDate: yesterday, ...previousDaySchedule, timezone });
+    if (now.getTime() < scheduledEndAt.getTime()) return yesterday;
+  }
+  return today;
+}
+
 const DATE_FORMAT: Intl.DateTimeFormatOptions = { day: "2-digit", month: "short", year: "numeric" };
 
 /**

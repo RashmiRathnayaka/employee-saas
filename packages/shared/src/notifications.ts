@@ -15,10 +15,9 @@ export const NOTIFICATION_TYPES = [
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
 
-/** What a notification points at. Phase 1 only ever links to a leave
- * request (document reviews link to the document's leave request, since
- * that's the screen that shows documents). */
-export const NOTIFICATION_ENTITY_TYPES = ["LeaveRequest"] as const;
+/** What a notification points at. Document reviews link to the document's
+ * leave request, since that's the screen that shows documents. */
+export const NOTIFICATION_ENTITY_TYPES = ["LeaveRequest", "AttendanceRecord", "SiteVisit", "Task"] as const;
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];
 
 export const NotificationSchema = z.object({
@@ -57,8 +56,28 @@ export function formatUnreadBadge(count: number): string {
   return count > 9 ? "9+" : String(count);
 }
 
-/** The leave request a notification should open, or null when it doesn't
- * point at one (the apps then just mark it read and stay put). */
-export function getNotificationLeaveRequestId(n: Pick<NotificationDto, "relatedEntityType" | "relatedEntityId">): string | null {
-  return n.relatedEntityType === "LeaveRequest" && n.relatedEntityId ? n.relatedEntityId : null;
+export type NotificationTarget = {
+  kind: "leaveRequest" | "attendance" | "siteVisit" | "task";
+  id: string;
+};
+
+/** What a notification should open, or null when it doesn't point at anything
+ * (the apps then just mark it read and stay put). An app that has no screen
+ * for a kind yet should do the same. */
+export function getNotificationTarget(
+  n: Pick<NotificationDto, "relatedEntityType" | "relatedEntityId">,
+): NotificationTarget | null {
+  if (!n.relatedEntityId) return null;
+  switch (n.relatedEntityType) {
+    case "LeaveRequest":
+      return { kind: "leaveRequest", id: n.relatedEntityId };
+    case "AttendanceRecord":
+      return { kind: "attendance", id: n.relatedEntityId };
+    case "SiteVisit":
+      return { kind: "siteVisit", id: n.relatedEntityId };
+    case "Task":
+      return { kind: "task", id: n.relatedEntityId };
+    default:
+      return null;
+  }
 }

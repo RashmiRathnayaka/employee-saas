@@ -14,4 +14,5 @@ export * from "./leaveRequests.js";
 export * from "./leaveDocuments.js";
 export * from "./dashboard.js";
 export * from "./dates.js";
+export * from "./geo.js";
 export * from "./notifications.js";
