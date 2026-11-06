@@ -31,21 +31,39 @@ export type AttendanceNextAction = z.infer<typeof AttendanceNextActionSchema>;
 export const ScheduleDayTypeSchema = z.enum(["WORKING", "HALF", "OFF", "HOLIDAY", "ON_LEAVE"]);
 export type ScheduleDayType = z.infer<typeof ScheduleDayTypeSchema>;
 
+/** Larger than any real fix, and small enough to always fit the whole-metre column. */
+const MAX_ACCURACY_METERS = 1_000_000;
+
+/**
+ * One fix, read when the employee taps (architecture-phase2 §3.1). The phone never
+ * sends a distance or a "within radius" answer: the server works those out.
+ */
+export const LocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  /** The phone's radius of uncertainty, in metres. */
+  accuracy: z.number().min(0).max(MAX_ACCURACY_METERS),
+  mocked: z.boolean(),
+  capturedAt: z.string().datetime(),
+});
+export type LocationDto = z.infer<typeof LocationSchema>;
+
 /**
  * Check-in and check-out bodies. The phone never sends a work date, a status or a
  * time the server would trust: `clientTime` is only logged, to diagnose a wrong
- * phone clock. Unknown fields are dropped, and that includes `location` until GPS
- * arrives in step 2.4, so nothing a phone sends can reach the GPS columns.
+ * phone clock. Unknown fields are dropped. A `location` is only kept when the site
+ * requires GPS (§3.1): the server discards it otherwise.
  */
 const clientTime = z.string().datetime().optional();
 
 export const CheckInRequestSchema = z.object({
   clientRequestId: z.string().uuid(),
+  location: LocationSchema.optional(),
   clientTime,
 });
 export type CheckInRequest = z.infer<typeof CheckInRequestSchema>;
 
-export const CheckOutRequestSchema = z.object({ clientTime });
+export const CheckOutRequestSchema = z.object({ location: LocationSchema.optional(), clientTime });
 export type CheckOutRequest = z.infer<typeof CheckOutRequestSchema>;
 
 const isoDate = z
@@ -136,5 +154,10 @@ export const AttendanceTodaySchema = z.object({
   schedule: EffectiveScheduleSchema,
   record: AttendanceRecordWithCoordinatesSchema.nullable(),
   nextAction: AttendanceNextActionSchema,
+  /** Whether the next tap should read the phone's location (§3.1). */
+  gpsRequired: z.boolean(),
+  /** The office that tap is checked against. Null if there's none, or several: the
+   * server can only pick the nearest once it has the location. No coordinates. */
+  officeSite: z.object({ id: z.string(), name: z.string(), radiusMeters: z.number() }).nullable(),
 });
 export type AttendanceTodayDto = z.infer<typeof AttendanceTodaySchema>;

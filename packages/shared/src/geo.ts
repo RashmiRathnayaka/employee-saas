@@ -1,5 +1,11 @@
 export type GeoPoint = { latitude: number; longitude: number };
 
+/** A distance as "850 m", or "12.3 km" from one kilometre up. */
+export function formatDistance(meters: number): string {
+  const whole = Math.round(meters);
+  return whole < 1000 ? `${whole} m` : `${Number((whole / 1000).toFixed(1))} km`;
+}
+
 /** Mean Earth radius. The Earth isn't a perfect sphere, but the error is well
  * under 1%, far smaller than a phone's GPS error. */
 const EARTH_RADIUS_METERS = 6_371_000;

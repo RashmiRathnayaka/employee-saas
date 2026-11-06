@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { haversineMeters } from "./geo.js";
+import { formatDistance, haversineMeters } from "./geo.js";
+
+describe("formatDistance", () => {
+  it.each([
+    [0, "0 m"],
+    [850, "850 m"],
+    [999.4, "999 m"],
+    [999.6, "1 km"],
+    [1000, "1 km"],
+    [12300, "12.3 km"],
+    [12340, "12.3 km"],
+    [20015000, "20015 km"],
+  ])("%d metres is %s", (meters, expected) => {
+    expect(formatDistance(meters)).toBe(expected);
+  });
+});
 
 // One degree along a meridian or the equator: 2 * pi * 6371000 / 360.
 const ONE_DEGREE_METERS = 111_194.93;

@@ -3,9 +3,11 @@ import {
   AttendanceListQuerySchema,
   CheckInRequestSchema,
   CheckOutRequestSchema,
+  LocationSchema,
 } from "./attendance.js";
 
 const ID = "3f2b8c1e-5d4a-4f6b-9a7c-1e2d3c4b5a69";
+const LOCATION = { latitude: 6.9271, longitude: 79.8612, accuracy: 12.5, mocked: false, capturedAt: "2026-11-03T03:30:00.000Z" };
 
 describe("CheckInRequestSchema", () => {
   it("needs a uuid clientRequestId", () => {
@@ -14,21 +16,52 @@ describe("CheckInRequestSchema", () => {
     expect(CheckInRequestSchema.safeParse({ clientRequestId: "not-a-uuid" }).success).toBe(false);
   });
 
-  it("drops anything the phone must not decide, and a location until GPS arrives", () => {
+  it("drops anything the phone must not decide", () => {
     const parsed = CheckInRequestSchema.parse({
       clientRequestId: ID,
       workDate: "2020-01-01",
       status: "PRESENT",
       checkInAt: "2020-01-01T00:00:00.000Z",
-      location: { latitude: 6.9, longitude: 79.8 },
     });
 
     expect(parsed).toEqual({ clientRequestId: ID });
   });
 
+  it("keeps a location, and drops a distance or an answer the phone tries to add to it", () => {
+    const parsed = CheckInRequestSchema.parse({
+      clientRequestId: ID,
+      location: { ...LOCATION, distanceM: 0, withinRadius: true },
+    });
+
+    expect(parsed.location).toEqual(LOCATION);
+  });
+
   it("rejects a clientTime that isn't a timestamp", () => {
     expect(CheckInRequestSchema.safeParse({ clientRequestId: ID, clientTime: "yesterday" }).success).toBe(false);
     expect(CheckOutRequestSchema.safeParse({ clientTime: "2026-11-03T09:00:00.000Z" }).success).toBe(true);
+  });
+});
+
+describe("LocationSchema", () => {
+  it.each([
+    ["a latitude past the pole", { latitude: 90.1 }],
+    ["a latitude past the other pole", { latitude: -90.1 }],
+    ["a longitude past the date line", { longitude: 180.1 }],
+    ["a longitude past it the other way", { longitude: -180.1 }],
+    ["a negative accuracy", { accuracy: -1 }],
+    ["an accuracy too big to store", { accuracy: 1_000_001 }],
+    ["no mocked answer", { mocked: undefined }],
+    ["a capturedAt that isn't a timestamp", { capturedAt: "just now" }],
+  ])("rejects %s", (_label, change) => {
+    expect(LocationSchema.safeParse({ ...LOCATION, ...change }).success).toBe(false);
+  });
+
+  it("accepts the edges of the map", () => {
+    expect(LocationSchema.safeParse({ ...LOCATION, latitude: -90, longitude: 180, accuracy: 0 }).success).toBe(true);
+  });
+
+  it("is accepted on a check-out too", () => {
+    expect(CheckOutRequestSchema.parse({ location: LOCATION }).location).toEqual(LOCATION);
   });
 });
 
