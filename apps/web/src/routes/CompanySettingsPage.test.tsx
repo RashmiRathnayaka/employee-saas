@@ -5,6 +5,7 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SHIFT_LENGTH_MESSAGE, type CompanyDto, type CompanySettingsDto } from "@employee-saas/shared";
+import { DEFAULT_PRIMARY_COLOR } from "../lib/companyContext";
 import { ToastProvider } from "../lib/toast";
 import { CompanySettingsPage } from "./CompanySettingsPage";
 import { strings } from "../strings";
@@ -45,10 +46,18 @@ const defaults: CompanySettingsDto = {
 };
 
 let stored: CompanySettingsDto;
+let storedCompany: CompanyDto;
 let patches: Record<string, unknown>[];
+let profilePatches: Record<string, unknown>[];
 
 const server = setupServer(
-  http.get("/api/v1/company", () => HttpResponse.json({ company })),
+  http.get("/api/v1/company", () => HttpResponse.json({ company: storedCompany })),
+  http.patch("/api/v1/company", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    profilePatches.push(body);
+    storedCompany = { ...storedCompany, ...body } as CompanyDto;
+    return HttpResponse.json({ company: storedCompany });
+  }),
   http.get("/api/v1/company/settings", () => HttpResponse.json({ settings: stored })),
   http.patch("/api/v1/company/settings", async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
@@ -61,7 +70,9 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => {
   stored = { ...defaults };
+  storedCompany = { ...company };
   patches = [];
+  profilePatches = [];
 });
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
@@ -78,12 +89,63 @@ function renderPage() {
 }
 
 /** The cards' Save buttons, in page order: profile, settings, modules, attendance. */
-async function saveButton(card: "modules" | "attendance") {
+async function saveButton(card: "profile" | "modules" | "attendance") {
   const buttons = await screen.findAllByRole("button", { name: strings.settings.save });
-  return buttons[card === "modules" ? 2 : 3]!;
+  return buttons[{ profile: 0, modules: 2, attendance: 3 }[card]]!;
 }
 
 describe("CompanySettingsPage", () => {
+  describe("company profile colour", () => {
+    it("shows the app's default colour, not black, when none is stored", async () => {
+      storedCompany = { ...company, primaryColor: null };
+      renderPage();
+
+      expect(await screen.findByLabelText(strings.settings.primaryColor)).toHaveValue(DEFAULT_PRIMARY_COLOR);
+    });
+
+    it("shows a stored colour, not black", async () => {
+      renderPage();
+
+      expect(await screen.findByLabelText(strings.settings.primaryColor)).toHaveValue("#4f46e5");
+    });
+
+    it("doesn't store a colour when the user only saves the name", async () => {
+      storedCompany = { ...company, primaryColor: null };
+      renderPage();
+      const user = userEvent.setup();
+
+      fireEvent.change(await screen.findByLabelText(strings.settings.name), { target: { value: "Acme Ltd" } });
+      await user.click(await saveButton("profile"));
+
+      await waitFor(() => expect(profilePatches).toHaveLength(1));
+      expect(profilePatches[0]).toEqual({ name: "Acme Ltd" });
+      expect(storedCompany.primaryColor).toBeNull();
+    });
+
+    it("sends a colour the user picked", async () => {
+      storedCompany = { ...company, primaryColor: null };
+      renderPage();
+      const user = userEvent.setup();
+
+      fireEvent.change(await screen.findByLabelText(strings.settings.primaryColor), { target: { value: "#112233" } });
+      await user.click(await saveButton("profile"));
+
+      await waitFor(() => expect(profilePatches).toHaveLength(1));
+      expect(profilePatches[0]).toEqual({ name: "Acme", primaryColor: "#112233" });
+    });
+
+    it("leaves an unchanged stored colour out, even if only its letter case differs", async () => {
+      renderPage();
+      const user = userEvent.setup();
+
+      await screen.findByLabelText(strings.settings.primaryColor);
+      await user.click(await saveButton("profile"));
+
+      await waitFor(() => expect(profilePatches).toHaveLength(1));
+      expect(profilePatches[0]).toEqual({ name: "Acme" });
+    });
+  });
+
   it("shows modules off by default, and sends the chosen switches when saved", async () => {
     renderPage();
     const user = userEvent.setup();

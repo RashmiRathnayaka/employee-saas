@@ -18,6 +18,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
 import { api } from "../lib/apiClient";
+import { DEFAULT_PRIMARY_COLOR } from "../lib/companyContext";
 import { applyApiErrorToForm, getErrorMessage } from "../lib/errorMapping";
 import { useToast } from "../lib/toast";
 import { strings } from "../strings";
@@ -62,14 +63,23 @@ export function CompanySettingsPage() {
 function ProfileCard({ company }: { company: CompanyDto }) {
   const toast = useToast();
   const queryClient = useQueryClient();
+  // The colour the app is really using. Lower case, because a colour input
+  // lower-cases its value and this is compared with it.
+  const currentColor = (company.primaryColor ?? DEFAULT_PRIMARY_COLOR).toLowerCase();
   const {
     register,
     handleSubmit,
     formState: { isSubmitting },
   } = useForm<UpdateCompanyProfileRequest>({
     resolver: zodResolver(UpdateCompanyProfileRequestSchema),
-    defaultValues: { name: company.name, primaryColor: company.primaryColor },
+    defaultValues: { name: company.name, primaryColor: currentColor },
   });
+
+  /** Leaves the colour out unless the user changed it, so saving the name can't
+   * turn the default into a stored brand colour. */
+  function withoutUnchangedColor({ primaryColor, ...rest }: UpdateCompanyProfileRequest): UpdateCompanyProfileRequest {
+    return primaryColor?.toLowerCase() === currentColor ? rest : { ...rest, primaryColor };
+  }
 
   const mutation = useMutation({
     mutationFn: (values: UpdateCompanyProfileRequest) => api.patch("/company", values),
@@ -86,14 +96,24 @@ function ProfileCard({ company }: { company: CompanyDto }) {
         <CardTitle>{strings.settings.profile}</CardTitle>
       </CardHeader>
       <CardContent>
-        <form className="flex flex-wrap items-end gap-4" onSubmit={handleSubmit((values) => mutation.mutateAsync(values))}>
+        <form className="flex flex-wrap items-end gap-4" onSubmit={handleSubmit((values) => mutation.mutateAsync(withoutUnchangedColor(values)))}>
           <div className="space-y-1.5">
             <Label htmlFor="name">{strings.settings.name}</Label>
             <Input id="name" className="w-64" {...register("name")} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="primaryColor">{strings.settings.primaryColor}</Label>
-            <input id="primaryColor" type="color" className="h-10 w-16 rounded border border-slate-300" {...register("primaryColor")} />
+            {/* defaultValue is needed as well as the form's default. A colour input
+                with none reports #000000, and react-hook-form takes "value differs
+                from defaultValue" to mean the user already edited it, so it would
+                keep the black and ignore the form's default. */}
+            <input
+              id="primaryColor"
+              type="color"
+              defaultValue={currentColor}
+              className="h-10 w-16 rounded border border-slate-300"
+              {...register("primaryColor")}
+            />
           </div>
           <Button type="submit" disabled={isSubmitting}>
             {strings.settings.save}

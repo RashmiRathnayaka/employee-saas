@@ -256,7 +256,7 @@ export const strings = {
     moduleTasksHint: "Assign tasks to employees and track them.",
     attendanceSettings: "Attendance, reminders and location",
     attendanceSettingsHint:
-      "Working hours and reminders take effect once the Attendance feature is available. The default radius and GPS setting apply to new sites now.",
+      "Working hours, the late limit and the closing time apply to check-ins in the mobile app. Reminders take effect in a later update. The default radius and GPS setting apply to new sites.",
     workHours: "Default working hours",
     workHoursHint: "Times are in your company's timezone. An end time earlier than the start time means the shift ends the next day.",
     workStartTime: "Start time",

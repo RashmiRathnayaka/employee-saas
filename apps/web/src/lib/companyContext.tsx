@@ -4,7 +4,7 @@ import type { CompanyDto } from "@employee-saas/shared";
 import { api } from "./apiClient";
 import { useAuth } from "./authContext";
 
-const DEFAULT_PRIMARY_COLOR = "#4f46e5";
+export const DEFAULT_PRIMARY_COLOR = "#4f46e5";
 
 type CompanyContextValue = {
   company: CompanyDto | null;
