@@ -4,6 +4,7 @@ import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native
 import { useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_TIMEZONE, formatDate, todayInTimezone } from "@employee-saas/shared";
 import { AttendanceCard } from "../../components/AttendanceCard";
+import { SiteVisitCard } from "../../components/SiteVisitCard";
 import { Screen } from "../../components/ui/Screen";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
@@ -25,6 +26,7 @@ export default function HomeScreen() {
   const unreadCountQuery = useUnreadNotificationCount();
   const { refetch: refetchUnreadCount } = unreadCountQuery;
   const attendanceEnabled = useIsModuleEnabled("attendance");
+  const sitesEnabled = useIsModuleEnabled("sites");
   const queryClient = useQueryClient();
 
   // Coming back to Home (e.g. from the notifications screen or another tab)
@@ -33,6 +35,7 @@ export default function HomeScreen() {
     useCallback(() => {
       void refetchUnreadCount();
       void queryClient.invalidateQueries({ queryKey: ["attendance", "today"] });
+      void queryClient.invalidateQueries({ queryKey: ["site-visits", "open"] });
     }, [refetchUnreadCount, queryClient]),
   );
 
@@ -47,6 +50,7 @@ export default function HomeScreen() {
       requestsQuery.refetch(),
       refetchUnreadCount(),
       queryClient.invalidateQueries({ queryKey: ["attendance", "today"] }),
+      queryClient.invalidateQueries({ queryKey: ["site-visits", "open"] }),
       queryClient.invalidateQueries({ queryKey: ["company-settings"] }),
     ]);
     setRefreshing(false);
@@ -99,6 +103,7 @@ export default function HomeScreen() {
         </Text>
 
         {attendanceEnabled ? <AttendanceCard /> : null}
+        {sitesEnabled ? <SiteVisitCard /> : null}
 
         <Card>
           <Text style={styles.cardTitle}>{strings.home.balancesTitle}</Text>

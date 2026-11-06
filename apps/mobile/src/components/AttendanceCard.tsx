@@ -1,16 +1,13 @@
-import { useState } from "react";
-import { Alert, Linking, Modal, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, StyleSheet, Text, View } from "react-native";
 import { formatDuration, formatTime, type AttendanceRecordDto, type AttendanceTodayDto } from "@employee-saas/shared";
 import { ApiClientError } from "../lib/apiClient";
 import { getAttendanceErrorMessage, isLocationRequiredError, useAttendanceActions, useAttendanceToday } from "../lib/attendance";
-import { shouldShowLocationDisclosure } from "../lib/location";
-import { acknowledgeLocationDisclosure } from "../lib/secureStore";
 import { useCompanyTimezone } from "../lib/theme";
 import { strings } from "../strings";
 import { AttendanceStatusChip } from "./AttendanceStatusChip";
-import { LocationDisclosure } from "./LocationDisclosure";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
+import { useLocationGate } from "./useLocationGate";
 
 type Action = "CHECK_IN" | "CHECK_OUT";
 
@@ -51,11 +48,12 @@ export function AttendanceCard() {
   const { checkIn, checkOut } = useAttendanceActions();
   const today = todayQuery.data;
   const record = today?.record ?? null;
-  const [preparing, setPreparing] = useState(false);
-  const [disclosureFor, setDisclosureFor] = useState<Action | null>(null);
-  const pending = preparing || checkIn.isPending || checkOut.isPending;
   const actionError = checkIn.error ?? checkOut.error;
   const gpsRequired = today?.gpsRequired ?? false;
+  // Before a check-out with no office to name, it can only be the open visit asking.
+  // Before a check-in, a visit left open has nothing to do with it.
+  const gpsHintSite =
+    today?.officeSite?.name ?? (today?.nextAction === "CHECK_OUT" ? (today.openVisit?.siteName ?? null) : null);
 
   function send(action: Action) {
     if (action === "CHECK_IN") {
@@ -67,32 +65,18 @@ export function AttendanceCard() {
     }
   }
 
-  /** A tap that needs location explains why first, the first time, before the OS asks. */
-  async function start(action: Action) {
-    if (gpsRequired) {
-      setPreparing(true);
-      const showDisclosure = await shouldShowLocationDisclosure().catch(() => false);
-      setPreparing(false);
-      if (showDisclosure) {
-        setDisclosureFor(action);
-        return;
-      }
-    }
-    send(action);
-  }
-
-  async function continueFromDisclosure() {
-    const action = disclosureFor!;
-    await acknowledgeLocationDisclosure();
-    setDisclosureFor(null);
-    send(action);
-  }
+  const gate = useLocationGate<Action>(send);
+  const pending = gate.preparing || checkIn.isPending || checkOut.isPending;
 
   /** There's one check-in/out pair a day, so a mistaken tap can't be undone without HR. */
   function confirmCheckOut() {
-    Alert.alert(strings.attendance.checkOutConfirmTitle, strings.attendance.checkOutConfirmMessage, [
+    // A day check-out also closes an open visit (§1.6), which they should know first.
+    const message = today?.openVisit
+      ? `${strings.attendance.checkOutConfirmMessage} ${strings.siteVisits.dayCheckOutClosesVisit(today.openVisit.siteName)}`
+      : strings.attendance.checkOutConfirmMessage;
+    Alert.alert(strings.attendance.checkOutConfirmTitle, message, [
       { text: strings.common.cancel, style: "cancel" },
-      { text: strings.attendance.checkOut, style: "destructive", onPress: () => void start("CHECK_OUT") },
+      { text: strings.attendance.checkOut, style: "destructive", onPress: () => void gate.start("CHECK_OUT", gpsRequired) },
     ]);
   }
 
@@ -120,7 +104,7 @@ export function AttendanceCard() {
           {record?.checkInAt ? <TimesRow record={record} timezone={timezone} /> : null}
           {today.gpsRequired ? (
             <Text style={styles.gpsHint}>
-              {today.officeSite ? strings.location.checkedAtSite(today.officeSite.name) : strings.location.checkedAtOffice}
+              {gpsHintSite ? strings.location.checkedAtSite(gpsHintSite) : strings.location.checkedAtOffice}
             </Text>
           ) : null}
 
@@ -128,7 +112,7 @@ export function AttendanceCard() {
             <Button
               title={strings.attendance.checkIn}
               loading={pending}
-              onPress={() => void start("CHECK_IN")}
+              onPress={() => void gate.start("CHECK_IN", gpsRequired)}
             />
           ) : null}
           {today.nextAction === "CHECK_OUT" ? (
@@ -154,15 +138,7 @@ export function AttendanceCard() {
         </View>
       ) : null}
 
-      <Modal visible={disclosureFor !== null} animationType="slide" onRequestClose={() => setDisclosureFor(null)}>
-        <ScrollView contentContainerStyle={styles.disclosure}>
-          <LocationDisclosure />
-          <View style={styles.disclosureButtons}>
-            <Button title={strings.location.continue} onPress={() => void continueFromDisclosure()} />
-            <Button title={strings.location.notNow} variant="secondary" onPress={() => setDisclosureFor(null)} />
-          </View>
-        </ScrollView>
-      </Modal>
+      {gate.disclosure}
     </Card>
   );
 }
@@ -177,6 +153,4 @@ const styles = StyleSheet.create({
   error: { fontSize: 14, color: "#DC2626", marginTop: 12 },
   gpsHint: { fontSize: 13, color: "#6B7280", marginBottom: 12 },
   settings: { marginTop: 12 },
-  disclosure: { flexGrow: 1, justifyContent: "center", padding: 24 },
-  disclosureButtons: { gap: 12, marginTop: 12 },
 });

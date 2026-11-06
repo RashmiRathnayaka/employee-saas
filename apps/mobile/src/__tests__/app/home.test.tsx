@@ -31,6 +31,7 @@ function jsonResponse(body: unknown): Response {
 }
 
 let requests: { status: string }[];
+let modules: Record<string, boolean>;
 
 const fetchMock = jest.fn(async (url: string | URL) => {
   const path = new URL(url).pathname.replace("/api/v1", "");
@@ -40,7 +41,9 @@ const fetchMock = jest.fn(async (url: string | URL) => {
     case "/company":
       return jsonResponse({ company: COMPANY });
     case "/company/settings":
-      return jsonResponse({ settings: { enabledModules: {} } });
+      return jsonResponse({ settings: { enabledModules: modules } });
+    case "/site-visits/me/open":
+      return jsonResponse({ visit: null, gpsRequired: false });
     case "/employees/me":
       return jsonResponse({ employee: { firstName: "Alex" } });
     case "/leave-types":
@@ -74,6 +77,7 @@ const fontSizeOf = (text: { props: Record<string, unknown> }) =>
 
 beforeEach(() => {
   requests = [];
+  modules = {};
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -106,5 +110,23 @@ describe("Home, Pending requests card", () => {
 
     expect(fontSizeOf(count)).toBeGreaterThan(fontSizeOf(screen.getByText(strings.home.noUpcomingLeave))!);
     expect(screen.queryByText(strings.home.pendingRequestsCount_zero)).toBeNull();
+  });
+});
+
+describe("Home, Site visit card", () => {
+  it("shows while the sites module is on, even with attendance off", async () => {
+    modules = { sites: true };
+    await renderHome();
+
+    expect(await screen.findByRole("button", { name: strings.siteVisits.checkIn })).toBeTruthy();
+    expect(screen.queryByText(strings.attendance.title)).toBeNull();
+  });
+
+  it("is hidden while the module is off, and never asks the server", async () => {
+    await renderHome();
+    await screen.findByText(strings.home.pendingRequests);
+
+    expect(screen.queryByText(strings.siteVisits.title)).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/site-visits"))).toBe(false);
   });
 });

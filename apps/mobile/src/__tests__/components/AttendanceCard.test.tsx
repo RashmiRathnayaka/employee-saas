@@ -138,7 +138,7 @@ function renderCard() {
 
 beforeEach(async () => {
   await SecureStore.deleteItemAsync("location.disclosureAcknowledged");
-  today = { workDate: "2026-11-03", schedule: SCHEDULE, record: null, nextAction: "CHECK_IN", gpsRequired: false, officeSite: null };
+  today = { workDate: "2026-11-03", schedule: SCHEDULE, record: null, nextAction: "CHECK_IN", gpsRequired: false, officeSite: null, openVisit: null };
   checkInBodies = [];
   checkOutBodies = [];
   Location.getForegroundPermissionsAsync.mockReset().mockResolvedValue(permission("granted"));
@@ -165,6 +165,50 @@ afterEach(() => {
 });
 
 describe("AttendanceCard", () => {
+  describe("with an open site visit", () => {
+    const OPEN_VISIT = { id: "v1", siteName: "Warehouse", checkInAt: "2026-11-03T05:00:00.000Z" };
+
+    it("the check-out confirmation says the visit closes too", async () => {
+      today = { ...today, record: makeRecord(), nextAction: "CHECK_OUT", openVisit: OPEN_VISIT };
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      expect(alertSpy.mock.calls[0]![1]).toBe(
+        `${strings.attendance.checkOutConfirmMessage} ${strings.siteVisits.dayCheckOutClosesVisit("Warehouse")}`,
+      );
+    });
+
+    it("before a check-in, a visit left open isn't named as what's being checked", async () => {
+      today = { ...today, nextAction: "CHECK_IN", gpsRequired: true, officeSite: null, openVisit: OPEN_VISIT };
+      await renderCard();
+
+      expect(await screen.findByText(strings.location.checkedAtOffice)).toBeTruthy();
+      expect(screen.queryByText(strings.location.checkedAtSite("Warehouse"))).toBeNull();
+    });
+
+    it("with no open visit, it's the plain confirmation", async () => {
+      today = { ...today, record: makeRecord(), nextAction: "CHECK_OUT" };
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      expect(alertSpy.mock.calls[0]![1]).toBe(strings.attendance.checkOutConfirmMessage);
+    });
+
+    it("if only the visit's site checks location: names it, and reads the location at check-out", async () => {
+      today = { ...today, record: makeRecord(), nextAction: "CHECK_OUT", gpsRequired: true, openVisit: OPEN_VISIT };
+      await renderCard();
+
+      expect(await screen.findByText(strings.location.checkedAtSite("Warehouse"))).toBeTruthy();
+
+      fireEvent.press(screen.getByRole("button", { name: strings.attendance.checkOut }));
+      await waitFor(() => expect(checkOutBodies).toHaveLength(1));
+
+      expect(checkOutBodies[0]!.location).toBeTruthy();
+    });
+  });
+
   it("before check-in: shows the schedule in company time, and offers Check in", async () => {
     await renderCard();
 

@@ -84,6 +84,10 @@ export function getAttendanceErrorMessage(error: unknown): string {
       return strings.location.outsideRadius(formatDistance(distanceM), siteName);
     }
   }
+  if (error instanceof ApiClientError && error.code === "VISIT_ALREADY_OPEN") {
+    const { visit } = (error.details ?? {}) as { visit?: { siteName?: unknown } };
+    if (typeof visit?.siteName === "string") return strings.siteVisits.checkOutFirst(visit.siteName);
+  }
   return getErrorMessage(error);
 }
 
@@ -119,7 +123,15 @@ async function locationFields({ gpsRequired }: TapOptions) {
 export function useAttendanceActions() {
   const queryClient = useQueryClient();
   const pendingCheckInId = useRef<string | null>(null);
-  const refresh = useCallback(() => queryClient.invalidateQueries({ queryKey: [ATTENDANCE_KEY] }), [queryClient]);
+  // A day check-out can close an open site visit too.
+  const refresh = useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: [ATTENDANCE_KEY] }),
+        queryClient.invalidateQueries({ queryKey: ["site-visits"] }),
+      ]),
+    [queryClient],
+  );
 
   const checkIn = useMutation({
     networkMode: "always",

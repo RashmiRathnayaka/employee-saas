@@ -42,6 +42,14 @@ function RootNavigator() {
         name="location-privacy"
         options={{ headerShown: true, title: strings.location.privacyTitle, headerTintColor: primaryColor }}
       />
+      <Stack.Screen
+        name="site-picker"
+        options={{ headerShown: true, title: strings.siteVisits.checkIn, headerTintColor: primaryColor }}
+      />
+      <Stack.Screen
+        name="my-visits"
+        options={{ headerShown: true, title: strings.siteVisits.myVisits, headerTintColor: primaryColor }}
+      />
     </Stack>
   );
 }
