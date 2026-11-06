@@ -39,6 +39,12 @@ export const NAV_ITEMS: NavItem[] = [
     module: "sites",
   },
   {
+    to: "/site-visits",
+    label: strings.nav.siteVisits,
+    roles: ["COMPANY_ADMIN", "HR", "MANAGER"],
+    module: "sites",
+  },
+  {
     to: "/leave-requests",
     label: strings.nav.leaveRequests,
     roles: ["COMPANY_ADMIN", "HR"],

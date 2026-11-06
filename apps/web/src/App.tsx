@@ -24,6 +24,7 @@ import { MyLeavePage } from "./routes/MyLeavePage";
 import { LeaveRequestDetailPage } from "./routes/LeaveRequestDetailPage";
 import { CompanySettingsPage } from "./routes/CompanySettingsPage";
 import { SitesPage } from "./routes/SitesPage";
+import { SiteVisitsPage } from "./routes/SiteVisitsPage";
 import { CompaniesPage } from "./routes/CompaniesPage";
 import { NotAllowedPage } from "./routes/NotAllowedPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
@@ -47,6 +48,7 @@ export function App() {
                     <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR", "MANAGER"]} />}>
                       <Route path="/employees" element={<EmployeesListPage />} />
                       <Route path="/employees/:id" element={<EmployeeDetailPage />} />
+                      <Route path="/site-visits" element={<SiteVisitsPage />} />
                     </Route>
                     <Route element={<RequireRole roles={["COMPANY_ADMIN", "HR"]} />}>
                       <Route path="/employees/new" element={<CreateEmployeePage />} />

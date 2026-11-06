@@ -14,5 +14,7 @@ export function useOpenNotification() {
     if (notification.readAt === null) markRead.mutate(notification.id);
     const target = getNotificationTarget(notification);
     if (target?.kind === "leaveRequest") navigate(`/leave-requests/${target.id}`);
+    // Only managers get these, and the page's "on site now" is where the visit shows.
+    if (target?.kind === "siteVisit") navigate("/site-visits");
   };
 }

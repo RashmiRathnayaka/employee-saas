@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { NotificationDto } from "@employee-saas/shared";
 import { AuthProvider } from "../lib/authContext";
@@ -63,6 +63,42 @@ function renderPage() {
     </QueryClientProvider>,
   );
 }
+
+function LocationProbe() {
+  return <p data-testid="location">{useLocation().pathname}</p>;
+}
+
+describe("opening a notification", () => {
+  it("a site check-in goes to the Site visits page", async () => {
+    const visitRow: NotificationDto = {
+      ...row(1, null),
+      type: "SITE_CHECKED_IN",
+      title: "Site check-in",
+      body: "Alex Silva checked in at Site X, 10:42",
+      relatedEntityType: "SiteVisit",
+      relatedEntityId: "v1",
+    };
+    server.use(
+      http.get("/api/v1/notifications", () => HttpResponse.json({ data: [visitRow], page: 1, pageSize: 20, total: 1 })),
+      http.patch("/api/v1/notifications/:id/read", () => HttpResponse.json({ notification: { ...visitRow, readAt: "2026-01-05T19:00:00.000Z" } })),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <AuthProvider>
+            <NotificationsPage />
+            <LocationProbe />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await userEvent.setup().click(await screen.findByText("Alex Silva checked in at Site X, 10:42"));
+
+    expect(screen.getByTestId("location").textContent).toBe("/site-visits");
+  });
+});
 
 describe("NotificationsPage", () => {
   it("pages through results and filters to unread only", async () => {
