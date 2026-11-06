@@ -4,7 +4,8 @@
 developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
 Implemented so far: step 2.1 (module gating, settings, shared helpers), step
 2.2 (sites), step 2.3 (office attendance), step 2.4 (GPS verification and the
-privacy disclosure) and step 2.5 (site visits).
+privacy disclosure), step 2.5 (site visits) and step 2.6 (HR views, corrections and
+schedule overrides).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -80,7 +81,9 @@ answers "what were they supposed to work?":
 2. Day weight from `workingDays[weekday]`:
    - `OFF` → non-working day.
    - `HALF` → end time is `halfDayEndTime`. For an override whose start is
-     after `halfDayEndTime`, a `HALF` day is treated as `FULL`.
+     after `halfDayEndTime`, a `HALF` day is treated as `FULL`. A shift that already
+     ends before `halfDayEndTime` (an override like 06:00-10:00) keeps its own end, so
+     a half day can't make it longer (settled in step 2.6).
 3. `company_holidays` on that date → non-working day.
 4. Approved leave covering that date:
    - full day → "on leave";
@@ -250,7 +253,12 @@ This section was decided in Q2.
   one, or until step 2.7, can't), the visit is recorded and flagged `AFTER_HOURS`, with
   no `attendanceRecordId`, and no row is created (settled in step 2.5). An office
   check-in at that moment would be refused (§1.3), so a visit can't start the day
-  either. Its `workDate` is still set, and step 2.7 links it if it writes `ABSENT`.
+  either (confirmed by the developer, 2026-11-06). Its `workDate` is still set, and step
+  2.7 links it if it writes `ABSENT`. If HR creates that day's record first, the create
+  links it (step 2.6), keeping the flag.
+- **The app asks "Check in at <site>?" before a site check-in** (decided by the developer,
+  2026-11-06), because it notifies the manager, can record the location and can start the
+  day. On a first use, the location disclosure comes after that answer.
 - **With `attendance` off** (§0), a visit touches no attendance row and gets neither
   flag. Its `workDate` is the company-local date.
 - The flags come from `nextAction`, the same answer the Home card and an office
@@ -297,6 +305,34 @@ This section was decided in Q2.
   (or NULL for HR-created rows), and `isCorrected = true` shows in every
   view.
 - The employee gets an `ATTENDANCE_CORRECTED` notification with the reason.
+
+**Details settled in step 2.6:**
+- **What a correction is judged against:** the record's own schedule snapshot, so a schedule
+  changed since doesn't rewrite the day. The snapshot has no grace period, so lateness uses
+  the employee's grace period as it is now.
+- **A row with no check-in** (`ABSENT`, `ON_LEAVE`, `HOLIDAY`) needs a check-in time. It
+  takes today's schedule for that date if it has no snapshot, earns the flags a check-in
+  that day would have (`NON_WORKING_DAY`, `ON_APPROVED_LEAVE`, `HALF_DAY_LEAVE`), and its
+  `source` becomes `HR`.
+- **Limits on the times**, since they're not GPS-checked: not in the future; check-out after
+  check-in, and within 24 hours of it (further apart is a mistyped date); and the check-in
+  on the work date in company time. A night shift's check-in may be on the next day. A
+  visit's may too, because a visit doesn't record its shift.
+- **A check-out can be changed but not removed.** A mistaken check-out is fixed by
+  setting the real time.
+- **Nothing changed:** `400 NOTHING_TO_CORRECT`, with no history, no `isCorrected` and no
+  notification.
+- **Two people at once:** the write is conditional on the row's `updatedAt`, so a
+  correction can't silently overwrite an employee's check-out or another correction. The
+  loser gets `409 RECORD_CHANGED`.
+- **A record created by HR** is judged like a check-in that day, using the employee's override
+  if any, and can't be before the joining date. It's `isCorrected`, `source = HR`, with
+  `before` null in the history.
+- **Correcting a visit** changes only its times, duration and status. A check-out closes
+  an `OPEN` or `AUTO_CLOSED` visit. Its flags and its attendance record stay as they are:
+  each has its own correction. Correcting a record's check-out doesn't close an open visit.
+- **The office** must be an `OFFICE` site of this company, inactive ones included, since a
+  past day may have been at one. Naming one with `sites` off answers `MODULE_DISABLED`.
 
 ---
 

@@ -38,9 +38,9 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | GET | `/schedule/me` | any employee | My effective schedule: start/end, grace and source (`COMPANY` / `OVERRIDE`), plus the next 14 days with each day's type (`WORKING` / `HALF` / `OFF` / `HOLIDAY` / `ON_LEAVE`) and scheduled times |
-| GET | `/employees/:id/schedule` | COMPANY_ADMIN, HR, MANAGER (own team) | An employee's effective schedule + override (if any) |
-| PUT | `/employees/:id/schedule` | COMPANY_ADMIN, HR | Set or replace the override `{ startTime, endTime, workingDays?, lateGraceMinutes? }`. Audited as `SCHEDULE_UPDATED`. |
-| DELETE | `/employees/:id/schedule` | COMPANY_ADMIN, HR | Remove the override and go back to the company default. Audited. |
+| GET | `/employees/:id/schedule` | COMPANY_ADMIN, HR, MANAGER (own team) | `{ schedule, override }`: the effective schedule, and the override or null |
+| PUT | `/employees/:id/schedule` | COMPANY_ADMIN, HR | Set or replace the override `{ startTime, endTime, workingDays?, lateGraceMinutes? }`. A field left out, or null, follows the company again. `workingDays` needs all seven days. Audited as `SCHEDULE_UPDATED`, unless nothing changed. |
+| DELETE | `/employees/:id/schedule` | COMPANY_ADMIN, HR | **204**. Remove the override and go back to the company default. Audited as `SCHEDULE_REMOVED`, unless there was none. |
 
 ## Office attendance (module `attendance`)
 
@@ -50,11 +50,11 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | POST | `/attendance/check-in` | any employee | Body `{ clientRequestId: uuid, location?: { latitude, longitude, accuracy, mocked, capturedAt }, clientTime? }`. The server picks the work date and computes the status. **201** with the record; **200** with the existing record if it's a retry with the same `clientRequestId`. **409** `ALREADY_CHECKED_IN` (with the existing record in `details.record`) / `ALREADY_CHECKED_OUT` / `DAY_ALREADY_CLOSED`, checked before GPS. It runs the GPS rules (architecture §3.2): **422** `LOCATION_REQUIRED` / `OUTSIDE_SITE_RADIUS` / `MOCK_LOCATION_DETECTED` (audited as `ATTENDANCE_CHECKIN_REJECTED`, with no coordinates). A `location` sent when no check applies is discarded. A malformed one is **400**. |
 | POST | `/attendance/check-out` | any employee | Body `{ location?, clientTime? }`. Closes the current record (architecture §1.3), which may be from yesterday on a night shift, and computes `workedMinutes` and `earlyLeaveMinutes`. **409** `NOT_CHECKED_IN` / `ALREADY_CHECKED_OUT` / `DAY_ALREADY_CLOSED`. GPS problems only add flags here and never reject (architecture §3.2). It also closes any open site visit, in the same transaction, judged by that visit's own site (architecture §1.6). |
 | GET | `/attendance/me` | any employee | My records, newest first, with optional `from`/`to` (dates, max 93 days apart when both are sent) and pagination. Includes my own coordinates. |
-| GET | `/attendance/team` | MANAGER | Direct reports' records. Filters: `date` or `from`/`to`, `employeeId` (narrowed to the team), `status`. No raw coordinates. |
-| GET | `/attendance` | COMPANY_ADMIN, HR | All records. Filters: `date` or `from`/`to`, `employeeId`, `departmentId`, `status`, `flag`. No raw coordinates in the list. |
-| GET | `/attendance/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | `{ record, siteVisits }`. Coordinates are included for the owner and HR/Company Admin only, on both. `siteVisits` is empty with `sites` off. Correction history is added in step 2.6. |
-| POST | `/attendance` | COMPANY_ADMIN, HR | Create a record for a day that has none: `{ employeeId, workDate, checkInAt, checkOutAt?, siteId?, reason }`. `409` if a row exists (correct it instead). **400** `CANNOT_CORRECT_OWN_ATTENDANCE` if it's the caller's own. Audited as `ATTENDANCE_CREATED_BY_HR`. |
-| PATCH | `/attendance/:id/correct` | COMPANY_ADMIN, HR | `{ checkInAt?, checkOutAt?, siteId?, reason }` (reason at least 5 chars). Recomputes the status, writes `attendance_corrections` + audit, and notifies the employee. A row that is `ABSENT` / `ON_LEAVE` / `HOLIDAY` can be given times, which turns it into `PRESENT` / `LATE`. Self-correction is blocked as above. |
+| GET | `/attendance/team` | MANAGER | Direct reports' records, with the same row and filters as below. `employeeId` is narrowed to the team. No raw coordinates. |
+| GET | `/attendance` | COMPANY_ADMIN, HR | All records, newest day first, then by name. Each row adds `employeeName`, `employeeCode`, `departmentName`, `siteName` and `siteVisitFlags` (`ON_ABSENT_DAY` while the row is still `ABSENT`; empty with `sites` off). Filters: `date` or `from`/`to` (not both), `employeeId`, `departmentId`, `status`, `flag`. No raw coordinates in the list. It only has rows that exist: employees with none yet appear in the daily report (step 2.11). |
+| GET | `/attendance/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | `{ record, employee: { name, code }, siteName, siteVisits, corrections }`. Coordinates are included for the owner and HR/Company Admin only, on the record and the visits. `siteVisits` is empty with `sites` off. `corrections` is newest first, and never has coordinates. |
+| POST | `/attendance` | COMPANY_ADMIN, HR | Create a record for a day that has none: `{ employeeId, workDate, checkInAt, checkOutAt?, siteId?, reason }`. **201** `{ record }`. **409** `ATTENDANCE_RECORD_EXISTS` with `details.recordId` if a row exists (correct it instead). **400** `CANNOT_CORRECT_OWN_ATTENDANCE` if it's the caller's own. **400** `VALIDATION_ERROR` before the joining date, or for the time limits in architecture §1.7. Links that day's unlinked visits. Audited as `ATTENDANCE_CREATED_BY_HR`, and notifies the employee. |
+| PATCH | `/attendance/:id/correct` | COMPANY_ADMIN, HR | `{ checkInAt?, checkOutAt?, siteId?, reason }` (reason at least 5 chars; `siteId: null` clears the office). **200** `{ record }`. Recomputes the status, writes `attendance_corrections` + audit, and notifies the employee. A row that is `ABSENT` / `ON_LEAVE` / `HOLIDAY` can be given times, which turns it into `PRESENT` / `LATE`. Self-correction is blocked as above. **400** `NOTHING_TO_CORRECT` if the values are the same; **409** `RECORD_CHANGED` if the row changed meanwhile. Time limits: architecture §1.7. |
 
 ## Sites (module `sites`)
 
@@ -77,8 +77,8 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | GET | `/site-visits/me/open` | any employee | `{ visit, gpsRequired }`: my open visit or `null`, and whether checking out of it should read the location. A summary of it is also in `/attendance/me/today`, but this one works with `attendance` off. |
 | GET | `/site-visits/team` | MANAGER | Direct reports' visits. Filters `from`/`to`, `employeeId`, `siteId`, `openOnly`. No raw coordinates. |
 | GET | `/site-visits` | COMPANY_ADMIN, HR | All visits, same filters |
-| GET | `/site-visits/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | `{ visit }`. Coordinates for the owner and HR/Admin only. Corrections are added in step 2.6. |
-| PATCH | `/site-visits/:id/correct` | COMPANY_ADMIN, HR | **Step 2.6.** `{ checkInAt?, checkOutAt?, reason }`. Same rules as attendance correction. Audited as `SITE_VISIT_CORRECTED`. |
+| GET | `/site-visits/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | `{ visit, corrections }`. Coordinates for the owner and HR/Admin only. The web's detail view is offered to HR and Company Admin only. |
+| PATCH | `/site-visits/:id/correct` | COMPANY_ADMIN, HR | `{ checkInAt?, checkOutAt?, reason }`. **200** `{ visit }`. Same rules as attendance correction. A check-out closes an open or auto-closed visit. Audited as `SITE_VISIT_CORRECTED`, and notifies the employee. |
 
 ## Tasks (module `tasks`)
 
@@ -160,3 +160,6 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | `OUTSIDE_SITE_RADIUS` | 422 | `details: { distanceM, radiusM, siteName }` |
 | `MOCK_LOCATION_DETECTED` | 422 | Android reported a mock location |
 | `CANNOT_CORRECT_OWN_ATTENDANCE` | 400 | Self-correction blocked |
+| `NOTHING_TO_CORRECT` | 400 | The correction's values are the ones already stored |
+| `RECORD_CHANGED` | 409 | The record or visit changed after this request read it |
+| `ATTENDANCE_RECORD_EXISTS` | 409 | That employee already has a row for that day; `details.recordId` |

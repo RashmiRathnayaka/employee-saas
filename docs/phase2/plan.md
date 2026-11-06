@@ -1,9 +1,9 @@
 # Phase 2 plan — Attendance & Site Management
 
 **Status: approved. All open questions were resolved by the developer on
-2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 to 2.4 are
-implemented (`docs/reports/step-2.1.md` to `step-2.4.md`). Step 2.5 is implemented
-and awaiting its real-device checklist (`docs/reports/step-2.5.md`).
+2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 to 2.5 are
+implemented and tested on a device (`docs/reports/step-2.1.md` to `step-2.5.md`). Step 2.6
+is implemented and awaiting its checklist (`docs/reports/step-2.6.md`).
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -217,6 +217,14 @@ and the riskiest unknowns come early:
 - Web date/time inputs in company time vs browser time. Reuse the 1.7
   helpers, and test with the PC timezone set to UTC.
 
+**Added before this step (your decisions, 2026-11-06):**
+- A "Check in at <site>?" confirmation in the site picker, because a check-in notifies the
+  manager and can record the location.
+- A visit detail on the web Site visits page, for HR and Company Admin only: both positions,
+  accuracy and an "Open in Google Maps" link (Q7). Managers have no way in.
+- A visit past the close time with no row stays unlinked `AFTER_HOURS`, with no row
+  created. Confirmed, so step 2.7's linking plan stands.
+
 ## 2.7 Job runner + day close (auto-close + absent marking)
 **Scope**
 - `job_runs`.
@@ -382,6 +390,8 @@ touches the same screen, or schedule them on their own.
   leave request detail page, without having to open it separately.
 - **Paste coordinates into one box:** paste "lat, lng" from Google Maps into one
   box on the site form, and it fills both the latitude and longitude fields.
+- **Web portal scrolls sideways at phone width (app shell sidebar):** the sidebar has no
+  narrow layout, so every page does it (measured in step 2.5).
 
 ---
 

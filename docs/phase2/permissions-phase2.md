@@ -41,6 +41,10 @@ otherwise), and the company's settings page shows the module switches.
 | View an employee's schedule | ✅ all | ✅ all | 🔶 own team | ❌ |
 | Set / remove a per-employee override | ✅ | ✅ | ❌ | ❌ |
 
+HR can set their own override: only correcting attendance is blocked for oneself. It's
+audited, and it only affects later check-ins. A manager's own schedule is `/schedule/me`,
+because `/employees/:id/schedule` covers their team, not them.
+
 ## Office attendance
 
 | Action | COMPANY_ADMIN | HR | MANAGER | EMPLOYEE |

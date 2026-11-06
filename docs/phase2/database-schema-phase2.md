@@ -7,8 +7,9 @@ the new `company_settings` columns and `notifications.dedupeKey`. Step 2.2,
 `company_settings.gpsRadiusMeters` CHECK. Step 2.3,
 `20261106150000_phase2_attendance`: the `attendance_records` table. Step 2.4 needed
 no migration: it fills GPS columns that already exist. Step 2.5,
-`20261106180000_phase2_site_visits`: the `site_visits` table. The other new tables
-aren't migrated yet.
+`20261106180000_phase2_site_visits`: the `site_visits` table. Step 2.6,
+`20261106210000_phase2_schedules_corrections`: `employee_schedules` and
+`attendance_corrections`. The other new tables aren't migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -333,9 +334,13 @@ given date happens in one shared helper (`zonedDateTimeToUtc`, see
   attendance record keeps a snapshot of the schedule it was judged against
   (`scheduledStartAt` / `scheduledEndAt`). So changing a schedule never
   rewrites past lateness.
-- Same `HH:mm` CHECKs as company_settings.
+- Same `HH:mm` CHECKs as company_settings, and `lateGraceMinutes` NULL or 0–240.
 - App rule: the shift length is 1–16 hours, including across midnight.
 - Deleting the row means "use the company default again".
+- It also has `createdAt`, like the other tables.
+- In `schema.prisma` the relation from `Employee` is a list, `schedules`, because Prisma's
+  one-to-one needs a unique on `employeeId` alone, and our unique is per company. The
+  index still allows only one.
 
 ### `attendance_records`
 One row per employee per work date. This is the core decision; see
@@ -425,7 +430,9 @@ An append-only history of HR changes. Rows are never updated or deleted.
 - `CHECK (length(trim(reason)) >= 5)`.
 - Index `(companyId, attendanceRecordId)` and `(companyId, siteVisitId)`.
 - `before` / `after` hold only the corrected fields (times, site, status),
-  **never coordinates**.
+  **never coordinates**. The site is stored as `siteName`, so the history reads the same
+  if it's renamed later.
+- `attendanceRecordId` and `siteVisitId` use `ON DELETE RESTRICT`, stated in `schema.prisma`.
 - Every correction also writes an `audit_logs` row in the same transaction
   (`ATTENDANCE_CORRECTED` / `ATTENDANCE_CREATED_BY_HR` /
   `SITE_VISIT_CORRECTED`). This table exists in addition to the audit log
