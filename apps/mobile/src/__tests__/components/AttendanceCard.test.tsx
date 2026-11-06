@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { Alert } from "react-native";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AttendanceRecordWithCoordinatesDto, AttendanceTodayDto } from "@employee-saas/shared";
@@ -79,6 +80,7 @@ let checkInBodies: { clientRequestId: string; clientTime?: string }[];
 let onCheckIn: () => Response;
 let onCheckOut: () => Response;
 let onToday: () => Response;
+let alertSpy: jest.SpiedFunction<typeof Alert.alert>;
 
 const fetchMock = jest.fn(async (url: string | URL, init: RequestInit = {}) => {
   const method = (init.method ?? "GET").toUpperCase();
@@ -119,7 +121,7 @@ function renderCard() {
 }
 
 beforeEach(() => {
-  today = { workDate: "2026-11-03", schedule: SCHEDULE, record: null, nextAction: "CHECK_IN" };
+  today = { workDate: "2026-11-03", schedule: SCHEDULE, record: null, nextAction: "CHECK_IN", gpsRequired: false, officeSite: null };
   checkInBodies = [];
   onCheckIn = () => jsonResponse({ record: makeRecord() }, 201);
   onCheckOut = () => jsonResponse({ record: makeRecord() });
@@ -127,6 +129,10 @@ beforeEach(() => {
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  // Presses the confirming button unless a test says otherwise.
+  alertSpy = jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
+    buttons?.find((button) => button.style !== "cancel")?.onPress?.();
+  });
 });
 
 afterEach(() => {
@@ -161,11 +167,67 @@ describe("AttendanceCard", () => {
     expect(checkInBodies[0]!.clientRequestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
-  it("shows the Late chip", async () => {
-    today = { ...today, record: makeRecord({ status: "LATE", lateMinutes: 12 }), nextAction: "CHECK_OUT" };
+  it.each([
+    [12, "Late by 12m"],
+    [60, "Late by 1h"],
+    [302, "Late by 5h 2m"],
+  ])("shows %d minutes late on the chip as %s", async (lateMinutes, label) => {
+    today = { ...today, record: makeRecord({ status: "LATE", lateMinutes }), nextAction: "CHECK_OUT" };
     await renderCard();
 
-    expect(await screen.findByText("Late by 12 min")).toBeTruthy();
+    expect(await screen.findByText(label)).toBeTruthy();
+  });
+
+  describe("confirming a check-out", () => {
+    const checkOuts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/attendance/check-out") && init?.method === "POST");
+
+    beforeEach(() => {
+      today = { ...today, record: makeRecord(), nextAction: "CHECK_OUT" };
+    });
+
+    it("tapping Check out only asks: nothing is sent yet", async () => {
+      alertSpy.mockImplementation(() => undefined);
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      expect(alertSpy.mock.calls[0]![1]).toMatch(/Are you sure you want to check out\?/);
+      expect(checkOuts()).toHaveLength(0);
+    });
+
+    it("cancelling sends nothing, and the button stays", async () => {
+      alertSpy.mockImplementation((_title, _message, buttons) => buttons?.find((button) => button.style === "cancel")?.onPress?.());
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      expect(checkOuts()).toHaveLength(0);
+      expect(screen.getByRole("button", { name: strings.attendance.checkOut })).toBeTruthy();
+    });
+
+    it("confirming checks out", async () => {
+      onCheckOut = () => {
+        today = { ...today, nextAction: "DONE", record: makeRecord({ checkOutAt: "2026-11-03T11:35:00.000Z", workedMinutes: 483 }) };
+        return jsonResponse({ record: today.record });
+      };
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkOut }));
+
+      expect(await screen.findByText(strings.attendance.done)).toBeTruthy();
+      expect(checkOuts()).toHaveLength(1);
+    });
+
+    it("a check-in doesn't ask", async () => {
+      today = { ...today, record: null, nextAction: "CHECK_IN" };
+      await renderCard();
+
+      fireEvent.press(await screen.findByRole("button", { name: strings.attendance.checkIn }));
+
+      await waitFor(() => expect(checkInBodies).toHaveLength(1));
+      expect(alertSpy).not.toHaveBeenCalled();
+    });
   });
 
   it("after check-out: shows the times and worked hours, and offers nothing", async () => {

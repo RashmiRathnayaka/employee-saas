@@ -1,3 +1,5 @@
+import { formatDuration } from "@employee-saas/shared";
+
 // All UI copy lives here (English for now) so Sinhala/Tamil can be added
 // later without touching component code.
 export const strings = {
@@ -71,7 +73,9 @@ export const strings = {
     done: "You're done for today.",
     dayClosed: "This day has closed. Ask HR if it needs correcting.",
     offline: "No internet connection, try again",
-    lateBy: (minutes: number) => `Late by ${minutes} min`,
+    lateBy: (minutes: number) => `Late by ${formatDuration(minutes)}`,
+    checkOutConfirmTitle: "Check out?",
+    checkOutConfirmMessage: "Are you sure you want to check out? You can't undo this yourself: HR would have to correct it.",
     noHistory: "No attendance yet",
     noCheckOut: "no check-out",
   },

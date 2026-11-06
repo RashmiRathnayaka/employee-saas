@@ -96,7 +96,7 @@ describe("AttendanceScreen", () => {
 
     expect(await screen.findByText("02 Oct 2026")).toBeTruthy();
     expect(screen.getByText("09:00 - 17:00 · 8h")).toBeTruthy();
-    expect(screen.getByText("Late by 12 min")).toBeTruthy();
+    expect(screen.getByText("Late by 12m")).toBeTruthy();
     expect(screen.getByText(`09:00 - ${strings.attendance.noCheckOut}`)).toBeTruthy();
   });
 

@@ -121,9 +121,11 @@ export default function HomeScreen() {
 
         <Card>
           <Text style={styles.cardTitle}>{strings.home.pendingRequests}</Text>
-          <Text style={styles.bigNumber}>
-            {pendingCount === 0 ? strings.home.pendingRequestsCount_zero : pendingCount}
-          </Text>
+          {pendingCount === 0 ? (
+            <Text style={styles.muted}>{strings.home.pendingRequestsCount_zero}</Text>
+          ) : (
+            <Text style={styles.bigNumber}>{pendingCount}</Text>
+          )}
         </Card>
 
         <Card style={styles.lastCard}>

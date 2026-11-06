@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, Text, View } from "react-native";
 import { formatDuration, formatTime, type AttendanceRecordDto, type AttendanceTodayDto } from "@employee-saas/shared";
 import { ApiClientError } from "../lib/apiClient";
 import { getAttendanceErrorMessage, useAttendanceActions, useAttendanceToday } from "../lib/attendance";
@@ -48,6 +48,21 @@ export function AttendanceCard() {
   const pending = checkIn.isPending || checkOut.isPending;
   const actionError = checkIn.error ?? checkOut.error;
 
+  /** There's one check-in/out pair a day, so a mistaken tap can't be undone without HR. */
+  function confirmCheckOut() {
+    Alert.alert(strings.attendance.checkOutConfirmTitle, strings.attendance.checkOutConfirmMessage, [
+      { text: strings.common.cancel, style: "cancel" },
+      {
+        text: strings.attendance.checkOut,
+        style: "destructive",
+        onPress: () => {
+          checkIn.reset();
+          checkOut.mutate();
+        },
+      },
+    ]);
+  }
+
   // The module was switched off after this screen loaded.
   if (todayQuery.error instanceof ApiClientError && todayQuery.error.code === "MODULE_DISABLED") {
     return null;
@@ -85,10 +100,7 @@ export function AttendanceCard() {
             <Button
               title={strings.attendance.checkOut}
               loading={pending}
-              onPress={() => {
-                checkIn.reset();
-                checkOut.mutate();
-              }}
+              onPress={confirmCheckOut}
             />
           ) : null}
           {today.nextAction === "DONE" ? <Text style={styles.muted}>{strings.attendance.done}</Text> : null}
