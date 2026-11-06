@@ -35,6 +35,8 @@ model Company {
   sites                 Site[]
   attendanceRecords     AttendanceRecord[]
   siteVisits            SiteVisit[]
+  employeeSchedules     EmployeeSchedule[]
+  attendanceCorrections AttendanceCorrection[]
 
   @@map("companies")
 }
@@ -127,6 +129,9 @@ model Employee {
   leaveRequests LeaveRequest[] @relation("EmployeeLeaveRequests")
   attendanceRecords AttendanceRecord[]
   siteVisits    SiteVisit[]
+  // At most one, enforced by the unique index on employee_schedules. A list only
+  // because Prisma's one-to-one needs a unique on employeeId alone, not per company.
+  schedules     EmployeeSchedule[]
 
   @@unique([companyId, employeeCode])
   @@index([companyId])
@@ -156,6 +161,7 @@ model User {
   revokedLeaveRequests LeaveRequest[]         @relation("LeaveRequestRevokedBy")
   reviewedDocuments    LeaveRequestDocument[] @relation("DocumentReviewer")
   createdSites         Site[]                 @relation("SiteCreatedBy")
+  attendanceCorrections AttendanceCorrection[] @relation("AttendanceCorrectedBy")
 
   @@unique([companyId, email])
   @@index([companyId])
@@ -400,6 +406,7 @@ model AttendanceRecord {
   updatedAt              DateTime         @updatedAt
 
   siteVisits             SiteVisit[]
+  corrections            AttendanceCorrection[]
 
   // The first makes double check-in impossible. The partial indexes and CHECKs
   // are added by hand in the migration SQL.
@@ -448,6 +455,8 @@ model SiteVisit {
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
+  corrections          AttendanceCorrection[]
+
   // "At most one open visit" is a partial unique index, and the CHECKs are added by
   // hand in the migration SQL.
   @@unique([companyId, employeeId, clientRequestId])
@@ -455,6 +464,51 @@ model SiteVisit {
   @@index([companyId, employeeId, checkInAt])
   @@index([companyId, workDate])
   @@map("site_visits")
+}
+
+// One override per employee, replacing the company's working hours: see
+// docs/phase2/architecture-phase2.md §1.2. Past records keep their own snapshot.
+model EmployeeSchedule {
+  id               String   @id @default(uuid())
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id])
+  employeeId       String
+  employee         Employee @relation(fields: [employeeId], references: [id])
+  // "HH:mm" wall-clock text, like company_settings. An end at or before the start
+  // means the next day. The format CHECKs are added by hand in the migration SQL.
+  startTime        String
+  endTime          String
+  // NULL follows the company's value.
+  workingDays      Json?
+  lateGraceMinutes Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([companyId, employeeId])
+  @@map("employee_schedules")
+}
+
+// An append-only history of HR's changes: see docs/phase2/architecture-phase2.md §1.7.
+// Exactly one of the two links is set, by a CHECK added by hand in the migration SQL.
+model AttendanceCorrection {
+  id                 String            @id @default(uuid())
+  companyId          String
+  company            Company           @relation(fields: [companyId], references: [id])
+  attendanceRecordId String?
+  attendanceRecord   AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  siteVisitId        String?
+  siteVisit          SiteVisit?        @relation(fields: [siteVisitId], references: [id], onDelete: Restrict)
+  correctedByUserId  String
+  correctedBy        User              @relation("AttendanceCorrectedBy", fields: [correctedByUserId], references: [id])
+  reason             String
+  // Only the fields that changed: times, office, status. Never coordinates.
+  before             Json?
+  after              Json
+  createdAt          DateTime          @default(now())
+
+  @@index([companyId, attendanceRecordId])
+  @@index([companyId, siteVisitId])
+  @@map("attendance_corrections")
 }
 
 enum SiteVisitStatus {

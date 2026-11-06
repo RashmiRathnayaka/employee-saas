@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  CorrectSiteVisitRequestSchema,
   MySiteVisitsQuerySchema,
   SiteCheckInRequestSchema,
   SiteCheckOutRequestSchema,
@@ -12,7 +13,7 @@ import { requireCompanyContext } from "../../middleware/requireCompanyContext.js
 import { requireModule } from "../../middleware/requireModule.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { validateBody } from "../../middleware/validate.js";
-import { checkIn, checkOut, getMyOpenVisit, getVisit, listAllVisits, listMyVisits, listTeamVisits } from "./siteVisits.service.js";
+import { checkIn, checkOut, correctVisit, getMyOpenVisit, getVisit, listAllVisits, listMyVisits, listTeamVisits } from "./siteVisits.service.js";
 
 export const siteVisitsRouter = Router();
 
@@ -86,11 +87,27 @@ siteVisitsRouter.get(
 siteVisitsRouter.get(
   "/site-visits/:id",
   asyncHandler(async (req, res) => {
-    const visit = await getVisit({
+    const detail = await getVisit({
       companyId: req.auth!.companyId!,
       role: req.auth!.role,
       callerEmployeeId: req.auth!.employeeId,
       visitId: req.params.id!,
+    });
+    res.status(200).json(detail);
+  }),
+);
+
+siteVisitsRouter.patch(
+  "/site-visits/:id/correct",
+  requireRole("COMPANY_ADMIN", "HR"),
+  validateBody(CorrectSiteVisitRequestSchema),
+  asyncHandler(async (req, res) => {
+    const visit = await correctVisit({
+      companyId: req.auth!.companyId!,
+      actorUserId: req.auth!.userId,
+      actorEmployeeId: req.auth!.employeeId,
+      visitId: req.params.id!,
+      data: req.body,
     });
     res.status(200).json({ visit });
   }),

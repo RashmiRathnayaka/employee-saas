@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyScheduleOverride,
   computeAttendanceStatus,
   computeCheckOut,
+  computeCorrectedRecord,
   getCheckInFlags,
+  getLeaveKindOnDate,
   getNextAction,
   getRecordCloseTime,
   resolveEffectiveSchedule,
@@ -53,6 +56,122 @@ describe.each(TEST_TIMEZONES)("attendance rules with server TZ=$tz", ({ tz, offs
       const night = schedule({ settings: { ...SETTINGS, workStartTime: "22:00", workEndTime: "06:00" } });
       expect(night.scheduledStartAt).toEqual(new Date("2026-11-03T16:30:00.000Z"));
       expect(night.scheduledEndAt).toEqual(new Date("2026-11-04T00:30:00.000Z"));
+    });
+
+    describe("with a per-employee override", () => {
+      const NIGHT = { startTime: "22:00", endTime: "06:00", workingDays: null, lateGraceMinutes: null };
+
+      it("takes the override's hours, and keeps the company's other values", () => {
+        const settings = applyScheduleOverride(SETTINGS, NIGHT);
+        expect(settings).toMatchObject({ workStartTime: "22:00", workEndTime: "06:00", lateGraceMinutes: 10, workingDays: SETTINGS.workingDays, halfDayEndTime: "13:00" });
+      });
+
+      it("takes the override's week and grace when it has them", () => {
+        const week = { ...SETTINGS.workingDays, sun: "FULL" as const };
+        const settings = applyScheduleOverride(SETTINGS, { ...NIGHT, workingDays: week, lateGraceMinutes: 0 });
+        expect(settings).toMatchObject({ workingDays: week, lateGraceMinutes: 0 });
+        expect(schedule({ workDate: SUNDAY, settings }).dayType).toBe("WORKING");
+      });
+
+      it("a grace of 0 is a value, not 'follow the company'", () => {
+        expect(applyScheduleOverride(SETTINGS, { ...NIGHT, lateGraceMinutes: 0 }).lateGraceMinutes).toBe(0);
+      });
+
+      it("no override: the company's settings, unchanged", () => {
+        expect(applyScheduleOverride(SETTINGS, null)).toBe(SETTINGS);
+      });
+
+      it("a HALF day stays a full night shift when it starts after the half-day end", () => {
+        const night = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, NIGHT) });
+        expect(night.dayType).toBe("WORKING");
+        expect(night.endTime).toBe("06:00");
+      });
+
+      it("a HALF day ends at the half-day end when the shift would run past it", () => {
+        const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "08:00", endTime: "16:00" }) });
+        expect(half).toMatchObject({ dayType: "HALF", endTime: "13:00" });
+      });
+
+      it("a HALF day doesn't make a short early shift longer", () => {
+        const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "06:00", endTime: "10:00" }) });
+        expect(half).toMatchObject({ dayType: "HALF", startTime: "06:00", endTime: "10:00" });
+      });
+
+      it("a HALF day cuts a shift that crosses midnight at the half-day end", () => {
+        const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "12:00", endTime: "02:00" }) });
+        expect(half).toMatchObject({ dayType: "HALF", endTime: "13:00" });
+      });
+    });
+
+    describe("getLeaveKindOnDate", () => {
+      const LEAVE = { startDate: "2026-11-03", endDate: "2026-11-05", startHalfDay: true, endHalfDay: false };
+
+      it.each([
+        ["the half first day", "2026-11-03", "HALF"],
+        ["a middle day", "2026-11-04", "FULL"],
+        ["a full last day", "2026-11-05", "FULL"],
+      ])("%s", (_name, date, kind) => {
+        expect(getLeaveKindOnDate(LEAVE, date)).toBe(kind);
+      });
+
+      it("the half last day", () => {
+        expect(getLeaveKindOnDate({ ...LEAVE, startHalfDay: false, endHalfDay: true }, "2026-11-05")).toBe("HALF");
+      });
+    });
+
+    describe("computeCorrectedRecord", () => {
+      const NINE = new Date("2026-11-03T03:30:00.000Z");
+      const FIVE = new Date("2026-11-03T11:30:00.000Z");
+      const at = (minutesAfterNine: number) => new Date(NINE.getTime() + minutesAfterNine * 60_000);
+      const base = {
+        checkInAt: NINE,
+        checkOutAt: null as Date | null,
+        autoClosedAt: null as Date | null,
+        scheduledStartAt: NINE,
+        scheduledEndAt: FIVE,
+        lateGraceMinutes: 10,
+        flags: [] as string[],
+      };
+
+      it("an earlier check-in turns LATE into PRESENT", () => {
+        expect(computeCorrectedRecord({ ...base, checkInAt: at(-5) })).toMatchObject({ status: "PRESENT", lateMinutes: 0 });
+      });
+
+      it("a later check-in turns PRESENT into LATE, counted from the start of the shift", () => {
+        expect(computeCorrectedRecord({ ...base, checkInAt: at(25) })).toMatchObject({ status: "LATE", lateMinutes: 25 });
+      });
+
+      it("with no check-out, nothing is worked yet", () => {
+        expect(computeCorrectedRecord(base)).toMatchObject({ workedMinutes: null, earlyLeaveMinutes: 0 });
+      });
+
+      it("a check-out gives worked and early-leave minutes", () => {
+        expect(computeCorrectedRecord({ ...base, checkOutAt: at(420) })).toMatchObject({ workedMinutes: 420, earlyLeaveMinutes: 60 });
+      });
+
+      it("an auto-closed day stays INCOMPLETE until it has a check-out", () => {
+        const closed = { ...base, checkInAt: at(30), autoClosedAt: at(1000), flags: ["AUTO_CLOSED"] };
+        expect(computeCorrectedRecord(closed)).toMatchObject({ status: "INCOMPLETE", lateMinutes: 30 });
+        expect(computeCorrectedRecord({ ...closed, checkOutAt: at(480) })).toMatchObject({ status: "LATE", workedMinutes: 450, flags: ["AUTO_CLOSED"] });
+      });
+
+      it("earns LONG_SHIFT, and loses it when the times come back", () => {
+        expect(computeCorrectedRecord({ ...base, checkOutAt: at(17 * 60) }).flags).toEqual(["LONG_SHIFT"]);
+        expect(computeCorrectedRecord({ ...base, checkOutAt: at(480), flags: ["LONG_SHIFT"] }).flags).toEqual([]);
+      });
+
+      it("keeps the GPS flags as captured", () => {
+        expect(computeCorrectedRecord({ ...base, flags: ["LOW_ACCURACY", "OUTSIDE_RADIUS_AT_CHECKOUT"] }).flags).toEqual(["LOW_ACCURACY", "OUTSIDE_RADIUS_AT_CHECKOUT"]);
+      });
+
+      it("half-day leave is never late or early", () => {
+        const half = computeCorrectedRecord({ ...base, checkInAt: at(120), checkOutAt: at(200), flags: ["HALF_DAY_LEAVE"] });
+        expect(half).toMatchObject({ status: "PRESENT", lateMinutes: 0, earlyLeaveMinutes: 0 });
+      });
+
+      it("a day with no schedule is never late", () => {
+        expect(computeCorrectedRecord({ ...base, scheduledStartAt: null, scheduledEndAt: null, checkInAt: at(300) })).toMatchObject({ status: "PRESENT", lateMinutes: 0 });
+      });
     });
 
     it("ends a HALF day at the half-day end time", () => {

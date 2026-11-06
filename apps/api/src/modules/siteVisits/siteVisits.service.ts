@@ -1,27 +1,35 @@
 import type { Prisma, Site } from "@prisma/client";
 import {
+  formatDate,
   formatTime,
   isModuleEnabled,
   isoDateToUtcDate,
   todayInTimezone,
+  utcDateToIsoDate,
+  type CorrectSiteVisitRequest,
   type LocationDto,
   type MySiteVisitsQuery,
   type OpenSiteVisitResponse,
   type PaginatedResponse,
   type Role,
+  type SiteVisitDetailDto,
   type SiteVisitDto,
   type SiteVisitFlag,
   type SiteVisitListQuery,
   type SiteVisitWithCoordinatesDto,
 } from "@employee-saas/shared";
+import { writeAudit } from "../../lib/audit.js";
+import { diffFields } from "../../lib/auditDiff.js";
 import { getCompanyTimezone } from "../../lib/companyTime.js";
 import { ApiError } from "../../lib/errors.js";
 import { checkInColumns, evaluateCheckInLocation, toGpsSite } from "../../lib/gpsVerification.js";
-import { createNotification } from "../../lib/notifications.js";
+import { createNotification, withNote } from "../../lib/notifications.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { getTenantPrisma, type TenantPrisma } from "../../lib/tenantPrisma.js";
 import { getCheckInFlags } from "../attendance/attendance.rules.js";
 import { getCurrentDay, rejectCheckIn, startOfDayColumns, type CurrentDay } from "../attendance/attendance.service.js";
+import { CORRECTION_INCLUDE, toCorrectionDto } from "../attendance/correctionRows.js";
+import { assertCorrectedTimes, cannotCorrectOwn, nothingToCorrect, recordChanged } from "../attendance/correctionRules.js";
 import {
   buildVisitCheckOut,
   findOpenVisit,
@@ -280,20 +288,113 @@ export async function getVisit(params: {
   role: Role;
   callerEmployeeId: string | null;
   visitId: string;
-}): Promise<SiteVisitDto | SiteVisitWithCoordinatesDto> {
+}): Promise<SiteVisitDetailDto> {
   const { companyId, role, callerEmployeeId, visitId } = params;
   const visit = await getTenantPrisma(companyId).siteVisit.findFirst({
     where: { companyId, id: visitId },
-    include: { ...VISIT_INCLUDE, employee: { select: { ...VISIT_INCLUDE.employee.select, managerId: true } } },
+    include: {
+      ...VISIT_INCLUDE,
+      employee: { select: { ...VISIT_INCLUDE.employee.select, managerId: true } },
+      corrections: { include: CORRECTION_INCLUDE, orderBy: { createdAt: "desc" } },
+    },
   });
   const notFound = new ApiError(404, "NOT_FOUND", "Site visit not found.");
   if (!visit) throw notFound;
+  const corrections = visit.corrections.map(toCorrectionDto);
 
   const isOwner = callerEmployeeId !== null && visit.employeeId === callerEmployeeId;
-  if (isOwner || role === "HR" || role === "COMPANY_ADMIN") return toVisitWithCoordinatesDto(visit);
+  if (isOwner || role === "HR" || role === "COMPANY_ADMIN") return { visit: toVisitWithCoordinatesDto(visit), corrections };
 
   const isTheirManager = role === "MANAGER" && callerEmployeeId !== null && visit.employee.managerId === callerEmployeeId;
-  if (isTheirManager) return toVisitDto(visit);
+  if (isTheirManager) return { visit: toVisitDto(visit), corrections };
 
   throw notFound;
+}
+
+/**
+ * HR's correction of a visit's times (§1.7). The visit's flags and its attendance
+ * record are left as they are: the flags say what happened at the time, and the record
+ * has its own correction. Setting a check-out closes an open or auto-closed visit.
+ */
+export async function correctVisit(params: {
+  companyId: string;
+  actorUserId: string;
+  actorEmployeeId: string | null;
+  visitId: string;
+  data: CorrectSiteVisitRequest;
+}): Promise<SiteVisitWithCoordinatesDto> {
+  const { companyId, actorUserId, actorEmployeeId, visitId, data } = params;
+  const tenant = getTenantPrisma(companyId);
+  const now = new Date();
+
+  const visit = await tenant.siteVisit.findFirst({ where: { companyId, id: visitId }, include: VISIT_INCLUDE });
+  if (!visit) throw new ApiError(404, "NOT_FOUND", "Site visit not found.");
+  if (actorEmployeeId !== null && visit.employeeId === actorEmployeeId) throw cannotCorrectOwn();
+
+  const timezone = await getCompanyTimezone(companyId);
+  const workDate = utcDateToIsoDate(visit.workDate);
+  const checkInAt = data.checkInAt ? new Date(data.checkInAt) : visit.checkInAt;
+  const checkOutAt = data.checkOutAt ? new Date(data.checkOutAt) : visit.checkOutAt;
+  // A night worker's visit can start after midnight, and a visit doesn't record which
+  // kind of shift it belonged to.
+  assertCorrectedTimes({ checkInAt, checkOutAt, workDate, timezone, now, allowNextDayCheckIn: true });
+
+  const status = checkOutAt ? ("CLOSED" as const) : visit.status;
+  const fields = (row: { checkInAt: Date; checkOutAt: Date | null; status: string }) => ({
+    checkInAt: row.checkInAt.toISOString(),
+    checkOutAt: row.checkOutAt?.toISOString() ?? null,
+    status: row.status,
+  });
+  const diff = diffFields(fields(visit), fields({ checkInAt, checkOutAt, status }), ["checkInAt", "checkOutAt", "status"]);
+  if (Object.keys(diff.after).length === 0) throw nothingToCorrect();
+
+  await tenant.$transaction(async (tx) => {
+    // Conditional on the row being as this request read it, so the employee's own
+    // check-out a moment ago isn't silently overwritten.
+    const { count } = await tx.siteVisit.updateMany({
+      where: { companyId, id: visit.id, updatedAt: visit.updatedAt },
+      data: {
+        checkInAt,
+        checkOutAt,
+        status,
+        durationMinutes: checkOutAt ? Math.floor((checkOutAt.getTime() - checkInAt.getTime()) / 60_000) : null,
+        isCorrected: true,
+      },
+    });
+    if (count === 0) throw recordChanged();
+
+    await tx.attendanceCorrection.create({
+      data: {
+        companyId,
+        siteVisitId: visit.id,
+        correctedByUserId: actorUserId,
+        reason: data.reason,
+        before: diff.before as Prisma.InputJsonObject,
+        after: diff.after as Prisma.InputJsonObject,
+      },
+    });
+    await writeAudit(tx, {
+      companyId,
+      actorUserId,
+      action: "SITE_VISIT_CORRECTED",
+      entityType: "SiteVisit",
+      entityId: visit.id,
+      metadata: { employeeId: visit.employeeId, siteId: visit.siteId, workDate, reason: data.reason, ...diff },
+    });
+
+    const login = await tx.user.findFirst({ where: { companyId, employeeId: visit.employeeId, status: "ACTIVE" }, select: { id: true } });
+    if (login) {
+      await createNotification(tx, {
+        companyId,
+        userId: login.id,
+        type: "ATTENDANCE_CORRECTED",
+        title: "Site visit corrected",
+        body: withNote(`HR corrected your visit to ${visit.site.name} on ${formatDate(workDate)}.`, data.reason, "Reason"),
+        relatedEntityType: "SiteVisit",
+        relatedEntityId: visit.id,
+      });
+    }
+  });
+
+  return toVisitWithCoordinatesDto(await tenant.siteVisit.findFirstOrThrow({ where: { companyId, id: visit.id }, include: VISIT_INCLUDE }));
 }

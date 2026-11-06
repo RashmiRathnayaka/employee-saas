@@ -1,11 +1,20 @@
 import { Router, type Request } from "express";
-import { AttendanceListQuerySchema, CheckInRequestSchema, CheckOutRequestSchema } from "@employee-saas/shared";
+import {
+  AttendanceAdminListQuerySchema,
+  AttendanceListQuerySchema,
+  CheckInRequestSchema,
+  CheckOutRequestSchema,
+  CorrectAttendanceRequestSchema,
+  CreateAttendanceRequestSchema,
+} from "@employee-saas/shared";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { ownEmployee } from "../../lib/ownEmployee.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireCompanyContext } from "../../middleware/requireCompanyContext.js";
 import { requireModule } from "../../middleware/requireModule.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { validateBody } from "../../middleware/validate.js";
+import { correctRecord, createRecord, listAllRecords, listTeamRecords } from "./attendanceAdmin.service.js";
 import { checkIn, checkOut, getRecord, getToday, listMyRecords } from "./attendance.service.js";
 
 export const attendanceRouter = Router();
@@ -65,7 +74,57 @@ attendanceRouter.post(
   }),
 );
 
-// After /attendance/me, which this pattern would otherwise swallow.
+attendanceRouter.get(
+  "/attendance/team",
+  requireRole("MANAGER"),
+  asyncHandler(async (req, res) => {
+    const { companyId, employeeId } = ownEmployee(req);
+    const query = AttendanceAdminListQuerySchema.parse(req.query);
+    res.status(200).json(await listTeamRecords({ companyId, managerEmployeeId: employeeId, query }));
+  }),
+);
+
+attendanceRouter.get(
+  "/attendance",
+  requireRole("COMPANY_ADMIN", "HR"),
+  asyncHandler(async (req, res) => {
+    const query = AttendanceAdminListQuerySchema.parse(req.query);
+    res.status(200).json(await listAllRecords({ companyId: req.auth!.companyId!, query }));
+  }),
+);
+
+attendanceRouter.post(
+  "/attendance",
+  requireRole("COMPANY_ADMIN", "HR"),
+  validateBody(CreateAttendanceRequestSchema),
+  asyncHandler(async (req, res) => {
+    const record = await createRecord({
+      companyId: req.auth!.companyId!,
+      actorUserId: req.auth!.userId,
+      actorEmployeeId: req.auth!.employeeId,
+      data: req.body,
+    });
+    res.status(201).json({ record });
+  }),
+);
+
+attendanceRouter.patch(
+  "/attendance/:id/correct",
+  requireRole("COMPANY_ADMIN", "HR"),
+  validateBody(CorrectAttendanceRequestSchema),
+  asyncHandler(async (req, res) => {
+    const record = await correctRecord({
+      companyId: req.auth!.companyId!,
+      actorUserId: req.auth!.userId,
+      actorEmployeeId: req.auth!.employeeId,
+      recordId: req.params.id!,
+      data: req.body,
+    });
+    res.status(200).json({ record });
+  }),
+);
+
+// After /attendance/me and /team, which this pattern would otherwise swallow.
 attendanceRouter.get(
   "/attendance/:id",
   asyncHandler(async (req, res) => {

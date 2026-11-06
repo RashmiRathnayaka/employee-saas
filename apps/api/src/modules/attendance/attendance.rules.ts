@@ -29,11 +29,37 @@ export type ScheduleSettings = {
   lateGraceMinutes: number;
 };
 
-/**
- * What someone was supposed to work on a date (§1.2). Per-employee overrides
- * arrive with step 2.6 and will replace the company defaults at the start of this
- * function; every caller is already going through it.
- */
+export type ScheduleOverride = {
+  startTime: string;
+  endTime: string;
+  /** Null follows the company's week. */
+  workingDays: WorkingDaysConfig | null;
+  /** Null follows the company's grace period. */
+  lateGraceMinutes: number | null;
+};
+
+/** A per-employee override takes the company defaults' place (§1.2). Every caller of
+ * `resolveEffectiveSchedule` passes settings through this first. */
+export function applyScheduleOverride(settings: ScheduleSettings, override: ScheduleOverride | null): ScheduleSettings {
+  if (!override) return settings;
+  return {
+    ...settings,
+    workStartTime: override.startTime,
+    workEndTime: override.endTime,
+    workingDays: override.workingDays ?? settings.workingDays,
+    lateGraceMinutes: override.lateGraceMinutes ?? settings.lateGraceMinutes,
+  };
+}
+
+/** What approved leave means for one date, given a leave covering it. */
+export function getLeaveKindOnDate(
+  leave: { startDate: string; endDate: string; startHalfDay: boolean; endHalfDay: boolean },
+  workDate: string,
+): "FULL" | "HALF" {
+  return (leave.startHalfDay && leave.startDate === workDate) || (leave.endHalfDay && leave.endDate === workDate) ? "HALF" : "FULL";
+}
+
+/** What someone was supposed to work on a date (§1.2). */
 export function resolveEffectiveSchedule(params: {
   workDate: string;
   timezone: string;
@@ -62,7 +88,10 @@ export function resolveEffectiveSchedule(params: {
   // half days are worked in full. At exactly the half-day end, using it as the end
   // time would mean "the same time tomorrow".
   const isHalfDay = weight === "HALF" && startTime < settings.halfDayEndTime;
-  const endTime = isHalfDay ? settings.halfDayEndTime : settings.workEndTime;
+  // A shift that's already over by the half-day end isn't made longer by it, which an
+  // override like 06:00-10:00 would otherwise be.
+  const endsBeforeHalfDayEnd = settings.workEndTime > startTime && settings.workEndTime < settings.halfDayEndTime;
+  const endTime = isHalfDay && !endsBeforeHalfDayEnd ? settings.halfDayEndTime : settings.workEndTime;
 
   return {
     dayType: leave === "FULL" ? "ON_LEAVE" : isHalfDay ? "HALF" : "WORKING",
@@ -116,6 +145,33 @@ export function computeCheckOut(record: {
       : 0;
   const isLong = workedMinutes > LONG_SHIFT_MINUTES && !record.flags.includes("LONG_SHIFT");
   return { workedMinutes, earlyLeaveMinutes, flags: isLong ? [...record.flags, "LONG_SHIFT"] : [...record.flags] };
+}
+
+/**
+ * Everything that follows from a record's times, after HR changes them (§1.7). HR
+ * never sets these directly. It uses the record's own schedule snapshot, so a schedule
+ * changed since doesn't rewrite the day. GPS flags stay as captured, and only
+ * `LONG_SHIFT` can be earned or lost here.
+ */
+export function computeCorrectedRecord(record: {
+  checkInAt: Date;
+  checkOutAt: Date | null;
+  autoClosedAt: Date | null;
+  scheduledStartAt: Date | null;
+  scheduledEndAt: Date | null;
+  lateGraceMinutes: number;
+  flags: readonly string[];
+}): { status: "PRESENT" | "LATE" | "INCOMPLETE"; lateMinutes: number; workedMinutes: number | null; earlyLeaveMinutes: number; flags: string[] } {
+  const { status, lateMinutes } = computeAttendanceStatus(record, {
+    scheduledStartAt: record.scheduledStartAt,
+    lateGraceMinutes: record.lateGraceMinutes,
+    isHalfDayLeave: record.flags.includes("HALF_DAY_LEAVE"),
+  });
+  const flags = record.flags.filter((flag) => flag !== "LONG_SHIFT");
+  if (!record.checkOutAt) return { status, lateMinutes, workedMinutes: null, earlyLeaveMinutes: 0, flags };
+
+  const closed = computeCheckOut({ checkInAt: record.checkInAt, checkOutAt: record.checkOutAt, scheduledEndAt: record.scheduledEndAt, flags });
+  return { status, lateMinutes, ...closed };
 }
 
 /**

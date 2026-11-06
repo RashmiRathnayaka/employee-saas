@@ -22,6 +22,8 @@ const TENANT_MODELS = new Set([
   "Site",
   "AttendanceRecord",
   "SiteVisit",
+  "EmployeeSchedule",
+  "AttendanceCorrection",
 ]);
 
 const WHERE_OPERATIONS = new Set([

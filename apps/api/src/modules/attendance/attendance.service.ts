@@ -9,14 +9,13 @@ import {
   type AttendanceFlag,
   type AttendanceListQuery,
   type AttendanceNextAction,
+  type AttendanceRecordDetailDto,
   type AttendanceRecordDto,
   type AttendanceRecordWithCoordinatesDto,
   type AttendanceTodayDto,
   type LocationDto,
   type PaginatedResponse,
   type Role,
-  type SiteVisitDto,
-  type SiteVisitWithCoordinatesDto,
 } from "@employee-saas/shared";
 import { writeAudit } from "../../lib/audit.js";
 import { getCompanyTimezone } from "../../lib/companyTime.js";
@@ -36,20 +35,24 @@ import { normalizeWorkingDays } from "../../lib/leaveDays.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { getTenantPrisma, type TenantPrisma } from "../../lib/tenantPrisma.js";
 import { buildVisitCheckOut, findOpenVisit, toVisitDto, toVisitWithCoordinatesDto, VISIT_INCLUDE, type VisitRow } from "../siteVisits/siteVisitRows.js";
+import { CORRECTION_INCLUDE, toCorrectionDto } from "./correctionRows.js";
 import {
+  applyScheduleOverride,
   computeAttendanceStatus,
   computeCheckOut,
   getCheckInFlags,
+  getLeaveKindOnDate,
   getNextAction,
   getRecordCloseTime,
   resolveEffectiveSchedule,
   type EffectiveSchedule,
+  type ScheduleOverride,
   type ScheduleSettings,
 } from "./attendance.rules.js";
 
 /** Built from a fixed list of fields rather than by removing some from the row, so
  * a column added later can't reach a manager by default. */
-function toRecordDto(record: AttendanceRecord): AttendanceRecordDto {
+export function toRecordDto(record: AttendanceRecord): AttendanceRecordDto {
   return {
     id: record.id,
     employeeId: record.employeeId,
@@ -80,7 +83,7 @@ function toRecordDto(record: AttendanceRecord): AttendanceRecordDto {
   };
 }
 
-function toRecordWithCoordinatesDto(record: AttendanceRecord): AttendanceRecordWithCoordinatesDto {
+export function toRecordWithCoordinatesDto(record: AttendanceRecord): AttendanceRecordWithCoordinatesDto {
   return {
     ...toRecordDto(record),
     checkInLat: record.checkInLat?.toNumber() ?? null,
@@ -90,7 +93,35 @@ function toRecordWithCoordinatesDto(record: AttendanceRecord): AttendanceRecordW
   };
 }
 
-async function getScheduleForDate(params: {
+/** The company's working hours with this employee's override, if they have one. It's
+ * read fresh on every request: there's nothing here worth a stale-schedule bug. */
+export async function getEmployeeScheduleSettings(
+  tenant: TenantPrisma,
+  companySettings: CompanySettings,
+  employeeId: string,
+): Promise<ScheduleSettings> {
+  const override = await tenant.employeeSchedule.findFirst({ where: { companyId: companySettings.companyId, employeeId } });
+  return applyScheduleOverride(
+    { ...companySettings, workingDays: normalizeWorkingDays(companySettings.workingDays) },
+    override && toScheduleOverride(override),
+  );
+}
+
+export function toScheduleOverride(row: {
+  startTime: string;
+  endTime: string;
+  workingDays: unknown;
+  lateGraceMinutes: number | null;
+}): ScheduleOverride {
+  return {
+    startTime: row.startTime,
+    endTime: row.endTime,
+    workingDays: row.workingDays === null ? null : normalizeWorkingDays(row.workingDays),
+    lateGraceMinutes: row.lateGraceMinutes,
+  };
+}
+
+export async function getScheduleForDate(params: {
   tenant: TenantPrisma;
   companyId: string;
   employeeId: string;
@@ -109,17 +140,14 @@ async function getScheduleForDate(params: {
     }),
   ]);
 
-  const isHalf =
-    leave !== null &&
-    ((leave.startHalfDay && utcDateToIsoDate(leave.startDate) === workDate) ||
-      (leave.endHalfDay && utcDateToIsoDate(leave.endDate) === workDate));
-
   return resolveEffectiveSchedule({
     workDate,
     timezone,
     settings,
     isHoliday: holiday !== null,
-    leave: leave === null ? null : isHalf ? "HALF" : "FULL",
+    leave:
+      leave &&
+      getLeaveKindOnDate({ ...leave, startDate: utcDateToIsoDate(leave.startDate), endDate: utcDateToIsoDate(leave.endDate) }, workDate),
   });
 }
 
@@ -200,7 +228,7 @@ export async function getCurrentDay(params: {
       orderBy: { workDate: "desc" },
     }),
   ]);
-  const settings: ScheduleSettings = { ...row, workingDays: normalizeWorkingDays(row.workingDays) };
+  const settings = await getEmployeeScheduleSettings(tenant, row, employeeId);
   const scheduleFor = (workDate: string) => getScheduleForDate({ tenant, companyId, employeeId, workDate, timezone, settings });
 
   const latestCloseTime = latestCheckIn && getRecordCloseTime(latestCheckIn, row.autoCheckoutAfterMinutes);
@@ -468,15 +496,16 @@ export async function getRecord(params: {
   role: Role;
   callerEmployeeId: string | null;
   recordId: string;
-}): Promise<{
-  record: AttendanceRecordDto | AttendanceRecordWithCoordinatesDto;
-  siteVisits: (SiteVisitDto | SiteVisitWithCoordinatesDto)[];
-}> {
+}): Promise<AttendanceRecordDetailDto> {
   const { companyId, role, callerEmployeeId, recordId } = params;
   const tenant = getTenantPrisma(companyId);
   const record = await tenant.attendanceRecord.findUnique({
     where: { id: recordId },
-    include: { employee: { select: { managerId: true } } },
+    include: {
+      employee: { select: { managerId: true, firstName: true, lastName: true, employeeCode: true } },
+      checkInSite: { select: { name: true } },
+      corrections: { include: CORRECTION_INCLUDE, orderBy: { createdAt: "desc" } },
+    },
   });
   const notFound = new ApiError(404, "NOT_FOUND", "Attendance record not found.");
   if (!record) throw notFound;
@@ -494,7 +523,12 @@ export async function getRecord(params: {
       })
     : [];
 
+  const common = {
+    employee: { name: `${record.employee.firstName} ${record.employee.lastName}`, code: record.employee.employeeCode },
+    siteName: record.checkInSite?.name ?? null,
+    corrections: record.corrections.map(toCorrectionDto),
+  };
   return seesCoordinates
-    ? { record: toRecordWithCoordinatesDto(record), siteVisits: visits.map(toVisitWithCoordinatesDto) }
-    : { record: toRecordDto(record), siteVisits: visits.map(toVisitDto) };
+    ? { ...common, record: toRecordWithCoordinatesDto(record), siteVisits: visits.map(toVisitWithCoordinatesDto) }
+    : { ...common, record: toRecordDto(record), siteVisits: visits.map(toVisitDto) };
 }
