@@ -5,6 +5,8 @@ import {
   daysBetweenIsoDates,
   formatDate,
   formatDateTime,
+  formatDuration,
+  formatTime,
   isoDateToLocalDate,
   isoDateToUtcDate,
   todayInTimezone,
@@ -95,8 +97,25 @@ describe.each(TEST_TIMEZONES)("date helpers with process TZ=$tz", ({ tz, offsetM
       expect(formatDate(JUST_AFTER_COLOMBO_MIDNIGHT.toISOString(), "UTC")).toBe("05 Jan 2026");
     });
 
+    it("formats a time in the given timezone", () => {
+      expect(formatTime(JUST_AFTER_COLOMBO_MIDNIGHT.toISOString(), "Asia/Colombo")).toBe("00:15");
+      expect(formatTime(JUST_AFTER_COLOMBO_MIDNIGHT.toISOString(), "UTC")).toBe("18:45");
+    });
+
     it("formats date + time in the given timezone", () => {
       expect(formatDateTime(JUST_AFTER_COLOMBO_MIDNIGHT.toISOString(), "Asia/Colombo")).toBe("06 Jan 2026, 00:15");
+    });
+  });
+
+  describe("formatDuration", () => {
+    it.each([
+      [0, "0m"],
+      [45, "45m"],
+      [60, "1h"],
+      [483, "8h 3m"],
+      [1020, "17h"],
+    ])("%i minutes is %s", (minutes, text) => {
+      expect(formatDuration(minutes)).toBe(text);
     });
   });
 });

@@ -248,6 +248,25 @@ export function formatDate(value: string, timezone: string = DEFAULT_TIMEZONE): 
   return new Intl.DateTimeFormat("en-GB", { ...DATE_FORMAT, timeZone: timezone }).format(new Date(value));
 }
 
+/** Formats a timestamp as "14:05" in `timezone`. */
+export function formatTime(value: string, timezone: string = DEFAULT_TIMEZONE): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: timezone,
+  }).format(new Date(value));
+}
+
+/** A number of minutes as "7h 52m". Hours are left out under one hour ("45m"),
+ * and minutes are left out on the exact hour ("8h"). */
+export function formatDuration(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
 /** Formats a timestamp as "31 Oct 2026, 14:05" in `timezone`. */
 export function formatDateTime(value: string, timezone: string = DEFAULT_TIMEZONE): string {
   return new Intl.DateTimeFormat("en-GB", {
