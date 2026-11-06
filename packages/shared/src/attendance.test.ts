@@ -1,10 +1,78 @@
 import { describe, expect, it } from "vitest";
 import {
+  AttendanceAdminListQuerySchema,
   AttendanceListQuerySchema,
   CheckInRequestSchema,
   CheckOutRequestSchema,
+  CorrectAttendanceRequestSchema,
+  CorrectSiteVisitRequestSchema,
+  CreateAttendanceRequestSchema,
   LocationSchema,
 } from "./attendance.js";
+
+describe("the correction requests", () => {
+  const AT = "2026-11-03T03:25:00.000Z";
+  const LATER = "2026-11-03T11:30:00.000Z";
+
+  describe.each([
+    ["attendance", CorrectAttendanceRequestSchema],
+    ["site visit", CorrectSiteVisitRequestSchema],
+  ])("%s", (_name, schema) => {
+    it("needs a reason of at least 5 characters, after trimming", () => {
+      expect(schema.safeParse({ checkInAt: AT }).success).toBe(false);
+      expect(schema.safeParse({ checkInAt: AT, reason: "  abcd  " }).success).toBe(false);
+      expect(schema.parse({ checkInAt: AT, reason: "  Forgot  " }).reason).toBe("Forgot");
+    });
+
+    it("needs something to change", () => {
+      expect(schema.safeParse({ reason: "Forgot to tap" }).success).toBe(false);
+    });
+
+    it("refuses a check-out at or before the check-in, on that field", () => {
+      const result = schema.safeParse({ checkInAt: LATER, checkOutAt: AT, reason: "Forgot to tap" });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.flatten().fieldErrors.checkOutAt).toEqual(["Check-out must be after check-in"]);
+      expect(schema.safeParse({ checkInAt: AT, checkOutAt: AT, reason: "Forgot to tap" }).success).toBe(false);
+    });
+
+    it("drops a status or a company, which HR can't set", () => {
+      const parsed = schema.parse({ checkInAt: AT, reason: "Forgot to tap", status: "PRESENT", companyId: "x", isCorrected: false });
+
+      expect(parsed).toEqual({ checkInAt: AT, reason: "Forgot to tap" });
+    });
+  });
+
+  it("an office can be cleared with null, and that counts as a change", () => {
+    expect(CorrectAttendanceRequestSchema.safeParse({ siteId: null, reason: "Wrong office" }).success).toBe(true);
+  });
+
+  it("a new record needs an employee, a date and a check-in", () => {
+    const body = { employeeId: "11111111-1111-4111-8111-111111111111", workDate: "2026-11-03", checkInAt: AT, reason: "Forgot to tap" };
+    expect(CreateAttendanceRequestSchema.safeParse(body).success).toBe(true);
+    expect(CreateAttendanceRequestSchema.safeParse({ ...body, checkInAt: undefined }).success).toBe(false);
+    expect(CreateAttendanceRequestSchema.safeParse({ ...body, workDate: "3 Nov" }).success).toBe(false);
+    expect(CreateAttendanceRequestSchema.safeParse({ ...body, checkOutAt: AT }).success).toBe(false);
+  });
+});
+
+describe("AttendanceAdminListQuerySchema", () => {
+  it("takes one day, or a range, but not both", () => {
+    expect(AttendanceAdminListQuerySchema.safeParse({ date: "2026-11-03" }).success).toBe(true);
+    expect(AttendanceAdminListQuerySchema.safeParse({ from: "2026-11-01", to: "2026-11-30" }).success).toBe(true);
+    expect(AttendanceAdminListQuerySchema.safeParse({ date: "2026-11-03", from: "2026-11-01" }).success).toBe(false);
+  });
+
+  it("keeps the 93-day limit and the page limit", () => {
+    expect(AttendanceAdminListQuerySchema.safeParse({ from: "2026-01-01", to: "2026-12-31" }).success).toBe(false);
+    expect(AttendanceAdminListQuerySchema.safeParse({ pageSize: "101" }).success).toBe(false);
+  });
+
+  it("refuses an unknown status or flag", () => {
+    expect(AttendanceAdminListQuerySchema.safeParse({ status: "HERE" }).success).toBe(false);
+    expect(AttendanceAdminListQuerySchema.safeParse({ flag: "NOPE" }).success).toBe(false);
+  });
+});
 
 const ID = "3f2b8c1e-5d4a-4f6b-9a7c-1e2d3c4b5a69";
 const LOCATION = { latitude: 6.9271, longitude: 79.8612, accuracy: 12.5, mocked: false, capturedAt: "2026-11-03T03:30:00.000Z" };

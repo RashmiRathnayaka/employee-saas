@@ -167,3 +167,129 @@ export const AttendanceTodaySchema = z.object({
   openVisit: z.object({ id: z.string(), siteName: z.string(), checkInAt: z.string() }).nullable(),
 });
 export type AttendanceTodayDto = z.infer<typeof AttendanceTodaySchema>;
+
+/** GET /attendance and /attendance/team. A single day, or a range, but not both. */
+export const AttendanceAdminListQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+    date: isoDateParam.optional(),
+    from: isoDateParam.optional(),
+    to: isoDateParam.optional(),
+    employeeId: z.string().uuid().optional(),
+    departmentId: z.string().uuid().optional(),
+    status: AttendanceStatusSchema.optional(),
+    flag: AttendanceFlagSchema.optional(),
+  })
+  .superRefine((query, ctx) => {
+    if (query.date && (query.from || query.to)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["date"], message: "Choose one day or a date range, not both" });
+    }
+    refineDateRange(query, ctx);
+  });
+export type AttendanceAdminListQuery = z.infer<typeof AttendanceAdminListQuerySchema>;
+
+/** One row of the HR and manager lists. Lists never carry positions, for anyone. */
+export const AttendanceListRowSchema = AttendanceRecordSchema.extend({
+  employeeName: z.string(),
+  employeeCode: z.string(),
+  departmentName: z.string().nullable(),
+  siteName: z.string().nullable(),
+  /** `ON_ABSENT_DAY` while the row is still ABSENT: the system says absent, but a visit
+   * says otherwise, and HR should look (architecture-phase2 §1.6). */
+  siteVisitFlags: z.array(z.literal("ON_ABSENT_DAY")),
+});
+export type AttendanceListRowDto = z.infer<typeof AttendanceListRowSchema>;
+
+export const CORRECTION_REASON_MIN = 5;
+export const CORRECTION_REASON_MAX = 500;
+
+const correctionReason = z
+  .string({ required_error: `Give a reason of at least ${CORRECTION_REASON_MIN} characters` })
+  .trim()
+  .min(CORRECTION_REASON_MIN, `Give a reason of at least ${CORRECTION_REASON_MIN} characters`)
+  .max(CORRECTION_REASON_MAX, `Keep the reason under ${CORRECTION_REASON_MAX} characters`);
+
+const instant = z.string().datetime();
+
+/** Check-out after check-in, when both are sent. The API checks again against the
+ * stored value when only one is. */
+function refineCorrectionTimes(
+  { checkInAt, checkOutAt }: { checkInAt?: string | undefined; checkOutAt?: string | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  if (!checkInAt || !checkOutAt || !instant.safeParse(checkInAt).success || !instant.safeParse(checkOutAt).success) return;
+  if (new Date(checkOutAt) <= new Date(checkInAt)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["checkOutAt"], message: "Check-out must be after check-in" });
+  }
+}
+
+/**
+ * PATCH /attendance/:id/correct. There's no status here on purpose: HR changes the
+ * facts, and the status follows from them (architecture-phase2 §1.7). A check-out can
+ * be changed but not removed.
+ */
+export const CorrectAttendanceRequestSchema = z
+  .object({
+    checkInAt: instant.optional(),
+    checkOutAt: instant.optional(),
+    /** The office. Null clears it. */
+    siteId: z.string().uuid().nullable().optional(),
+    reason: correctionReason,
+  })
+  .superRefine((body, ctx) => {
+    if (body.checkInAt === undefined && body.checkOutAt === undefined && body.siteId === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [], message: "Change at least one of check-in, check-out or office" });
+    }
+    refineCorrectionTimes(body, ctx);
+  });
+export type CorrectAttendanceRequest = z.infer<typeof CorrectAttendanceRequestSchema>;
+
+/** POST /attendance: a record for a day that has none. */
+export const CreateAttendanceRequestSchema = z
+  .object({
+    employeeId: z.string().uuid(),
+    workDate: isoDateParam,
+    checkInAt: instant,
+    checkOutAt: instant.optional(),
+    siteId: z.string().uuid().optional(),
+    reason: correctionReason,
+  })
+  .superRefine(refineCorrectionTimes);
+export type CreateAttendanceRequest = z.infer<typeof CreateAttendanceRequestSchema>;
+
+/** PATCH /site-visits/:id/correct. */
+export const CorrectSiteVisitRequestSchema = z
+  .object({
+    checkInAt: instant.optional(),
+    checkOutAt: instant.optional(),
+    reason: correctionReason,
+  })
+  .superRefine((body, ctx) => {
+    if (body.checkInAt === undefined && body.checkOutAt === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [], message: "Change the check-in or the check-out" });
+    }
+    refineCorrectionTimes(body, ctx);
+  });
+export type CorrectSiteVisitRequest = z.infer<typeof CorrectSiteVisitRequestSchema>;
+
+/** The fields one correction changed. Never coordinates. */
+export const CorrectedFieldsSchema = z.object({
+  checkInAt: z.string().nullable().optional(),
+  checkOutAt: z.string().nullable().optional(),
+  status: z.string().optional(),
+  siteName: z.string().nullable().optional(),
+});
+export type CorrectedFieldsDto = z.infer<typeof CorrectedFieldsSchema>;
+
+export const AttendanceCorrectionSchema = z.object({
+  id: z.string(),
+  /** Null when the person who corrected it has no employee profile. */
+  correctedByName: z.string().nullable(),
+  reason: z.string(),
+  /** Null when HR created the record. */
+  before: CorrectedFieldsSchema.nullable(),
+  after: CorrectedFieldsSchema,
+  createdAt: z.string(),
+});
+export type AttendanceCorrectionDto = z.infer<typeof AttendanceCorrectionSchema>;

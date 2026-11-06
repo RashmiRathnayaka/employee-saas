@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { LocationSchema, refineDateRange, isoDateParam } from "./attendance.js";
+import {
+  AttendanceCorrectionSchema,
+  AttendanceRecordSchema,
+  AttendanceRecordWithCoordinatesSchema,
+  LocationSchema,
+  refineDateRange,
+  isoDateParam,
+} from "./attendance.js";
 
 export const SiteVisitStatusSchema = z.enum(["OPEN", "CLOSED", "AUTO_CLOSED"]);
 export type SiteVisitStatus = z.infer<typeof SiteVisitStatusSchema>;
@@ -112,3 +119,22 @@ export const OpenSiteVisitResponseSchema = z.object({
   gpsRequired: z.boolean(),
 });
 export type OpenSiteVisitResponse = z.infer<typeof OpenSiteVisitResponseSchema>;
+
+/** GET /site-visits/:id. Coordinates only for the owner, HR and Company Admin: the
+ * longer schema comes first, or a union would strip them. */
+export const SiteVisitDetailSchema = z.object({
+  visit: z.union([SiteVisitWithCoordinatesSchema, SiteVisitSchema]),
+  corrections: z.array(AttendanceCorrectionSchema),
+});
+export type SiteVisitDetailDto = z.infer<typeof SiteVisitDetailSchema>;
+
+/** GET /attendance/:id. It's here because it includes the day's visits. Coordinates
+ * only for the owner, HR and Company Admin. */
+export const AttendanceRecordDetailSchema = z.object({
+  record: z.union([AttendanceRecordWithCoordinatesSchema, AttendanceRecordSchema]),
+  employee: z.object({ name: z.string(), code: z.string() }),
+  siteName: z.string().nullable(),
+  siteVisits: z.array(z.union([SiteVisitWithCoordinatesSchema, SiteVisitSchema])),
+  corrections: z.array(AttendanceCorrectionSchema),
+});
+export type AttendanceRecordDetailDto = z.infer<typeof AttendanceRecordDetailSchema>;
