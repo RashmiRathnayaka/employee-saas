@@ -31,7 +31,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | GET | `/company/settings` | any | Now also returns the work schedule defaults (`workStartTime`, `workEndTime`, `halfDayEndTime`, `lateGraceMinutes`, `autoCheckoutAfterMinutes`), reminder settings and GPS settings (`gpsMaxAccuracyMeters`, `gpsRetentionDays`). `enabledModules` now has `attendance`, `sites` and `tasks`. |
-| PATCH | `/company/settings` | COMPANY_ADMIN | Accepts the new fields (validated `HH:mm`, ranges as in the schema doc). `enabledModules` accepts only `attendance`, `sites` and `tasks`, and is merged into the stored value. Audited as `COMPANY_SETTINGS_UPDATED`, with the before and after values of the fields that changed. |
+| PATCH | `/company/settings` | COMPANY_ADMIN | Accepts the new fields (validated `HH:mm`, ranges as in the schema doc). `enabledModules` accepts only `attendance`, `sites` and `tasks`, and is merged into the stored value. `gpsRadiusMeters` must be 25–5000. The shift from `workStartTime` to `workEndTime` must be 1–16 hours, including across midnight; if a PATCH sends only one of them, it's checked against the stored other one (**400** `VALIDATION_ERROR` on the field). Audited as `COMPANY_SETTINGS_UPDATED`, with the before and after values of the fields that changed. |
 
 ## Schedules (module `attendance`)
 
@@ -60,18 +60,18 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| GET | `/sites` | any | Employees and managers: active sites only, with `id, name, type, address, gpsRequired, radiusMeters, hasCoordinates`. Sites from my open tasks come first, marked `fromMyTasks`. HR and Company Admin: all sites including inactive, with coordinates. Filters `type`, `active`, `q`. |
-| GET | `/sites/:id` | any (employees: active only) | One site |
-| POST | `/sites` | COMPANY_ADMIN, HR | Create `{ name, type, address?, latitude?, longitude?, radiusMeters?, gpsRequired? }`. Missing radius/gpsRequired come from company defaults. Audited as `SITE_CREATED`. |
-| PATCH | `/sites/:id` | COMPANY_ADMIN, HR | Edit. Audited as `SITE_UPDATED` (before/after). Changing coordinates or radius doesn't re-evaluate past visits. |
-| PATCH | `/sites/:id/status` | COMPANY_ADMIN, HR | `{ isActive }`. Deactivating doesn't close open visits (they close normally). Audited. |
-| DELETE | `/sites/:id` | COMPANY_ADMIN, HR | Only if nothing references it; otherwise `409 SITE_IN_USE` (deactivate instead). Audited. |
+| GET | `/sites` | any | Paginated, sorted by name. Employees and managers: active sites only, with `id, name, type, address, gpsRequired, radiusMeters, hasCoordinates`; `active` is ignored for them. From step 2.10, sites from my open tasks come first, marked `fromMyTasks`. HR and Company Admin: all sites including inactive, with coordinates. Filters `type`, `active` (`true`/`false`), `q` (name or address). |
+| GET | `/sites/:id` | any (employees: active only) | `{ site }`, with the same fields as the list for that role |
+| POST | `/sites` | COMPANY_ADMIN, HR | Create `{ name, type, address?, latitude?, longitude?, radiusMeters?, gpsRequired? }`. Missing radius/gpsRequired come from company defaults. **201** `{ site }`. **409** `SITE_NAME_TAKEN`. Audited as `SITE_CREATED`. |
+| PATCH | `/sites/:id` | COMPANY_ADMIN, HR | Edit any of those fields. The location rules (architecture §2) are checked on the combined values. **409** `SITE_NAME_TAKEN`. Audited as `SITE_UPDATED` (before/after of the changed fields); a save that changes nothing writes no audit row. Changing coordinates or radius doesn't re-evaluate past visits. |
+| PATCH | `/sites/:id/status` | COMPANY_ADMIN, HR | `{ isActive }`. Deactivating doesn't close open visits (they close normally). Audited as `SITE_STATUS_CHANGED`, unless it's already in that state. |
+| DELETE | `/sites/:id` | COMPANY_ADMIN, HR | **204**. Only if nothing references it; otherwise `409 SITE_IN_USE` (deactivate instead). Audited as `SITE_DELETED`. |
 
 ## Site visits (module `sites`)
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| POST | `/site-visits/check-in` | any employee | `{ siteId, clientRequestId, location?, note? }`. Uses the GPS rules with the site's settings. Starts the attendance day if there's no record for the work date. If the employee already checked in (office), only the visit is recorded. If the day is closed, only the visit is recorded and it's flagged `AFTER_HOURS` (architecture §1.6, Q2). Notifies the manager (`SITE_CHECKED_IN`). **201**, or **200** on a retry. **409** `VISIT_ALREADY_OPEN`; **404** for an inactive or unknown site; **422** for the GPS errors. |
+| POST | `/site-visits/check-in` | any employee | `{ siteId, clientRequestId, location?, note? }`. Uses the GPS rules with the site's settings. Starts the attendance day if there's no record for the work date. If the employee already checked in (office), only the visit is recorded. If the day is closed, only the visit is recorded and it's flagged `AFTER_HOURS`; if the day was marked `ABSENT`, it's flagged `ON_ABSENT_DAY` instead (architecture §1.6, Q2). Notifies the manager (`SITE_CHECKED_IN`). **201**, or **200** on a retry. **409** `VISIT_ALREADY_OPEN`; **404** for an inactive or unknown site; **422** for the GPS errors. |
 | POST | `/site-visits/:id/check-out` | visit owner | `{ location?, note? }` → computes `durationMinutes`. **409** `VISIT_NOT_OPEN`. |
 | GET | `/site-visits/me` | any employee | My visits (`from`/`to`, paginated) |
 | GET | `/site-visits/me/open` | any employee | My open visit or `null` (also included in `/attendance/me/today`) |
@@ -124,11 +124,11 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| GET | `/reports/attendance/daily` | COMPANY_ADMIN, HR, MANAGER (team) | `?date=YYYY-MM-DD` (default today, company time), plus `departmentId`, `status`. One row per in-scope active employee (architecture §6), with totals per status. Paginated. |
+| GET | `/reports/attendance/daily` | COMPANY_ADMIN, HR, MANAGER (team) | `?date=YYYY-MM-DD` (default today, company time), plus `departmentId`, `status`. One row per in-scope active employee (architecture §6), with totals per status. An `ABSENT` row with an `ON_ABSENT_DAY` visit carries that flag in `siteVisitFlags`. Paginated. |
 | GET | `/reports/attendance/daily/export` | same | Same filters → `text/csv` attachment `attendance-YYYY-MM-DD.csv`. Audited as `REPORT_EXPORTED`. |
 | GET | `/reports/attendance/monthly` | COMPANY_ADMIN, HR, MANAGER (team) | `?month=YYYY-MM`, `departmentId`. Per employee: `presentDays, lateDays, absentDays, onLeaveDays, holidayDays, incompleteDays, totalWorkedMinutes`. Paginated. |
 | GET | `/reports/attendance/monthly/export` | same | CSV `attendance-summary-YYYY-MM.csv`. Audited. |
-| GET | `/reports/site-visits` | COMPANY_ADMIN, HR, MANAGER (team) | `from`, `to` (max 93 days), `siteId`, `employeeId`, `flag`. Paginated visit rows with duration and flags (including `AFTER_HOURS`). |
+| GET | `/reports/site-visits` | COMPANY_ADMIN, HR, MANAGER (team) | `from`, `to` (max 93 days), `siteId`, `employeeId`, `flag`. Paginated visit rows with duration and flags (including `AFTER_HOURS` and `ON_ABSENT_DAY`). |
 | GET | `/reports/site-visits/export` | same | CSV. Audited. |
 
 ## Dashboard (extended)
@@ -155,6 +155,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | `DAY_ALREADY_CLOSED` | 409 | Auto-closed; ask HR |
 | `VISIT_ALREADY_OPEN` / `VISIT_NOT_OPEN` | 409 | Site visit state |
 | `SITE_IN_USE` | 409 | Delete blocked; deactivate instead |
+| `SITE_NAME_TAKEN` | 409 | Another site in this company has that name, ignoring case (inactive ones count) |
 | `LOCATION_REQUIRED` | 422 | GPS-required site, no location sent |
 | `OUTSIDE_SITE_RADIUS` | 422 | `details: { distanceM, radiusM, siteName }` |
 | `MOCK_LOCATION_DETECTED` | 422 | Android reported a mock location |

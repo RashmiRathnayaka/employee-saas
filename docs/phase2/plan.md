@@ -1,8 +1,9 @@
 # Phase 2 plan — Attendance & Site Management
 
 **Status: approved. All open questions were resolved by the developer on
-2026-11-03 (see "Resolved questions" at the end).** Step 2.1 is implemented
-(`docs/reports/step-2.1.md`). Step 2.2 starts when the developer says so.
+2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 and 2.2 are
+implemented (`docs/reports/step-2.1.md`, `step-2.2.md`). Step 2.3 starts when
+the developer says so.
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -72,6 +73,13 @@ and the riskiest unknowns come early:
   form with lat/lng inputs, an "Open in Google Maps" check link, and
   defaults from settings.
 - Cross-tenant and module tests.
+- **Settings fixes found in 2.1:**
+  - `gpsRadiusMeters` must be 25–5000, the same as a site's radius, so a bad
+    default can't make site creation fail.
+  - The Settings page gets the two fields it was missing: default GPS radius
+    and "GPS required for new sites".
+  - The 1–16 hour shift rule also applies to the company default hours (your
+    decision, 2026-11-06).
 
 **Try it:**
 - On web, create your real office as an `OFFICE` site: copy the coordinates
@@ -156,6 +164,8 @@ and the riskiest unknowns come early:
 - The first visit starts the attendance day (§1.6).
 - A visit after the day is closed doesn't reopen it and is flagged
   `AFTER_HOURS`.
+- A visit on a day already marked `ABSENT` leaves the row alone and is flagged
+  `ON_ABSENT_DAY` (your decision, 2026-11-06).
 - One open visit at a time.
 - Day check-out closes an open visit.
 - `SITE_CHECKED_IN` notification to the manager.
@@ -180,7 +190,8 @@ and the riskiest unknowns come early:
 ## 2.6 HR attendance views, corrections, schedule overrides
 **Scope**
 - Web **Attendance** page:
-  - HR: daily view with status chips and flags;
+  - HR: daily view with status chips and flags, including an `ABSENT` row
+    that has an `ON_ABSENT_DAY` visit, so HR can correct it;
   - manager: team-only;
   - record detail with visits and correction history.
 - Correct-record and create-missing-record dialogs (reason required).
@@ -309,7 +320,8 @@ and the riskiest unknowns come early:
 ## 2.11 Reports, CSV export, dashboard tiles
 **Scope**
 - Daily, monthly and site-visit report endpoints + CSV export (BOM,
-  formula-injection guard, no coordinates, audited).
+  formula-injection guard, no coordinates, audited). The daily report and its
+  CSV show `ON_ABSENT_DAY` visits next to the `ABSENT` row.
 - Web **Reports** page with three tabs and "Download CSV".
 - Dashboard tiles for today's attendance, on site now, and open/overdue
   tasks.
@@ -345,6 +357,13 @@ and the riskiest unknowns come early:
 
 ---
 
+## UX improvements backlog
+Small improvements that aren't part of any step yet. Pick them up when a step
+touches the same screen, or schedule them on their own.
+- **Inline image preview of proof documents:** HR sees the proof image on the
+  leave request detail page, without having to open it separately.
+
+---
 
 ## Resolved questions
 All 24 were resolved by the developer on 2026-11-03.
@@ -355,7 +374,7 @@ All 24 were resolved by the developer on 2026-11-03.
 | # | Topic | Decision | How |
 |---|---|---|---|
 | Q1 | Module default | A missing `enabledModules` key = **off**; new companies start with attendance/sites/tasks off. **Seed:** all three **on for ACME** (to test the features), **off for BETA** (to test `MODULE_DISABLED`). | Your answer |
-| Q2 | Site visit starts the day | **Yes.** A site check-in starts the attendance day if there's no record for that work date. If the employee already checked in at the office, **only the visit is recorded**. A visit after the day was closed is also just recorded, doesn't reopen the day, and is **flagged `AFTER_HOURS`** so it shows in HR reports (your answer, 2026-11-06). Architecture §1.6. | Your answer |
+| Q2 | Site visit starts the day | **Yes.** A site check-in starts the attendance day if there's no record for that work date. If the employee already checked in at the office, **only the visit is recorded**. A visit after the day was closed is also just recorded, doesn't reopen the day, and is **flagged `AFTER_HOURS`** so it shows in HR reports (your answer, 2026-11-06). On a day already marked `ABSENT`, the row is left alone and the visit is **flagged `ON_ABSENT_DAY`**, shown in the HR daily report so HR can correct it (your answer, 2026-11-06). Architecture §1.6. | Your answer |
 | Q3 | Sessions per day | One check-in/out pair per work date. No lunch-break out/in. | Accepted |
 | Q4 | Offline | **No offline check-in in Phase 2**, because the device clock can be manipulated. The app shows **"No internet connection, try again"**. Offline check-in is noted as a **possible future requirement** (architecture §1.5). | Your answer |
 | Q5 | Site assignment | Any employee can pick any active external site. No per-employee assignments. | Accepted |

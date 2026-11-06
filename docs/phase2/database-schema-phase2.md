@@ -2,8 +2,10 @@
 
 **Status: design approved; open questions resolved 2026-11-03 (see
 `plan.md`).** Migrated so far (step 2.1, `20261106090000_phase2_foundations`):
-the new `company_settings` columns and `notifications.dedupeKey`. The new
-tables aren't migrated yet.
+the new `company_settings` columns and `notifications.dedupeKey`. Step 2.2,
+`20261106120000_phase2_sites`: the `sites` table and the
+`company_settings.gpsRadiusMeters` CHECK. The other new tables aren't migrated
+yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -266,7 +268,14 @@ erDiagram
 The existing `gpsCheckinEnabledDefault` and `gpsRadiusMeters` keep their
 meaning as **the defaults for a new site** (`sites.gpsRequired`,
 `sites.radiusMeters`). They are no longer read at check-in time; the site's
-own values are.
+own values are. `gpsRadiusMeters` gained `CHECK BETWEEN 25 AND 5000` in step
+2.2, the same range as a site's radius, so a default can never fail when a site
+is created.
+
+**App rule, not a CHECK:** the length of the default shift (`workStartTime` to
+`workEndTime`) must be 1–16 hours, including across midnight, the same as a
+per-employee override (decided by the developer, 2026-11-06). A partial PATCH is
+checked against the stored value of the field it doesn't send.
 
 **`enabledModules` keys.** The JSON gains three keys: `attendance`, `sites`,
 `tasks`.
@@ -307,6 +316,9 @@ given date happens in one shared helper (`zonedDateTimeToUtc`, see
 - `CHECK (NOT gpsRequired OR (latitude IS NOT NULL AND longitude IS NOT NULL))`:
   a GPS-required site must have coordinates.
 - `CHECK (latitude BETWEEN -90 AND 90)`, `CHECK (longitude BETWEEN -180 AND 180)`.
+- `CHECK ((latitude IS NULL) = (longitude IS NULL))`: half a position is
+  useless, so they're set together or not at all.
+- `type` is a Postgres enum (`SiteType`), like the Phase 1 status columns.
 - A site is never hard-deleted once any visit, attendance record or task
   references it (FK `ON DELETE RESTRICT`). It is deactivated instead.
 - `type = OFFICE` is what office attendance checks GPS against. A company
@@ -376,6 +388,9 @@ architecture §1 for why there's a single check-in/check-out pair per day.
 - `flags` holds the GPS flags from `attendance_records`, plus **`AFTER_HOURS`**:
   the visit started after that day's attendance record was closed
   (architecture §1.6). The record itself isn't changed.
+- It also holds **`ON_ABSENT_DAY`**: the visit started on a day day close had
+  already marked `ABSENT` (architecture §1.6). The record isn't changed, and
+  the HR daily report shows the flag so HR can correct it.
 - `durationMinutes = floor((checkOutAt - checkInAt) / 60s)`. It is computed
   by the server on check-out or correction, never sent by the client.
   `AUTO_CLOSED` visits have `checkOutAt` NULL and `durationMinutes` NULL

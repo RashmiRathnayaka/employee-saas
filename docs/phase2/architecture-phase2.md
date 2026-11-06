@@ -2,7 +2,8 @@
 
 **Status: design approved. The open questions were resolved by the
 developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
-Implemented so far: step 2.1 (module gating, settings, shared helpers).
+Implemented so far: step 2.1 (module gating, settings, shared helpers) and
+step 2.2 (sites).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -176,11 +177,22 @@ This section was decided in Q2.
   gets the flag **`AFTER_HOURS`**, so it stands out in HR reports (decided
   by the developer, 2026-11-06).
   - "Closed" means the record has a `checkOutAt` or an `autoClosedAt`.
-  - It also covers a record day close wrote with no check-in (`ABSENT`,
-    `ON_LEAVE`, `HOLIDAY`): day close has already run for that date. HR
-    can correct the record if the person really was working.
+  - It also covers a record day close wrote with no check-in as `ON_LEAVE` or
+    `HOLIDAY`: day close has already run for that date. HR can correct the
+    record if the person really was working.
   - The flag goes on the **visit** (`site_visits.flags`), not on the
     attendance record.
+  - It isn't a rejection, and the manager still gets `SITE_CHECKED_IN`.
+- **If day close already marked the day `ABSENT`**, the visit is recorded and
+  linked to that row, and the row is left alone. The visit gets the flag
+  **`ON_ABSENT_DAY`** instead of `AFTER_HOURS` (decided by the developer,
+  2026-11-06).
+  - The system says they were absent, but they were on site. That's a
+    contradiction for a person to resolve, so it stands out in the **HR daily
+    report** (§6), and HR can correct the row.
+  - The flag stays on the visit as a record of what happened. The daily report
+    only shows it while the row is still `ABSENT`, so it disappears once HR
+    corrects the row or approved leave flips it to `ON_LEAVE`.
   - It isn't a rejection, and the manager still gets `SITE_CHECKED_IN`.
 - The day is ended by the normal "Check out for the day" or by auto-close.
 - Checking out of a site **does not** end the attendance day, because
@@ -227,13 +239,25 @@ This section was decided in Q2.
     radius (25–5000 m), GPS required, active.
 - New sites take `radiusMeters` and `gpsRequired` defaults from
   `company_settings.gpsRadiusMeters` / `gpsCheckinEnabledDefault`.
+- **Location rules** (checked on the combined values of a partial edit):
+  latitude and longitude are set together or not at all, and a GPS-required
+  site must have them. So switching on GPS by default means a new site needs
+  coordinates too, unless the form unticks "GPS required".
+- **Site names** are unique per company, ignoring case, and that includes
+  inactive sites, so a deactivated site's name can't be reused.
+- **Deleting** relies on the foreign keys. Every later table that references a
+  site uses `ON DELETE RESTRICT`, and the API turns that database error into
+  `409 SITE_IN_USE`. So no later step has to remember to extend a "does anything
+  use this site?" check.
 - Coordinates are entered as numbers. The web form shows an
   "Open in Google Maps" link to check them. There's no map widget and no
   new library; HR can copy coordinates from Google Maps (right-click → the
   coordinates line).
 - **Which sites an employee can pick:** all active `EXTERNAL` sites in the
-  company. Sites from the employee's open tasks are listed first. There
-  are no per-employee site assignments in Phase 2 (decided, Q5).
+  company. `GET /sites` returns every active site, and the step 2.5 picker asks
+  for `?type=EXTERNAL`. Sites from the employee's open tasks are listed first
+  (added with tasks, in step 2.10). There are no per-employee site assignments
+  in Phase 2 (decided, Q5).
 - **Office attendance and GPS:**
   - If the company has no active `OFFICE` site, office check-in has no GPS
     at all (flag `NO_OFFICE_SITE`).
@@ -663,14 +687,17 @@ deadline (decided, Q19).
   - For **today**, employees with no row yet show a display-only state:
     `NOT_CHECKED_IN` before the close time, `ON_LEAVE`/`HOLIDAY` from
     leave/holidays. It's computed on read and not stored.
+  - An `ABSENT` row with an `ON_ABSENT_DAY` visit (§1.6) carries that flag in
+    `siteVisitFlags`, in the page and the CSV, so HR can spot it and correct
+    the row.
 - **Monthly summary** per employee for `YYYY-MM` in company time: present
   (incl. late and incomplete), late, absent, on leave, holiday, incomplete
   days, and total worked minutes.
   - Built by one `GROUP BY` over `attendance_records` for that month's
     date range.
 - **Site visit history:** filter by date range (max 93 days), site,
-  employee and flag. It shows duration and flags, including `AFTER_HOURS`
-  (§1.6), which also appears in the CSV.
+  employee and flag. It shows duration and flags, including `AFTER_HOURS` and
+  `ON_ABSENT_DAY` (§1.6), which also appear in the CSV.
 - **CSV export** for each of these:
   - UTF-8 with BOM, so Excel opens Sinhala/Tamil names correctly.
   - Times are in company local time, with the timezone in the header row.
