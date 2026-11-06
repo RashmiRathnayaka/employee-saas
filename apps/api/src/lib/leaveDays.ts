@@ -1,4 +1,4 @@
-import { utcDateToIsoDate } from "@employee-saas/shared";
+import { isoDateToUtcDate, utcDateToIsoDate } from "@employee-saas/shared";
 import { ApiError } from "./errors.js";
 
 export type WorkDayWeight = "FULL" | "HALF" | "OFF";
@@ -83,6 +83,11 @@ export function calculateLeaveDays(params: {
   }
 
   return total;
+}
+
+/** What `workingDays` says about one calendar date ("YYYY-MM-DD"). */
+export function getWorkDayWeight(workingDays: WorkingDaysConfig, isoDate: string): WorkDayWeight {
+  return workingDays[DAY_KEYS[isoDateToUtcDate(isoDate).getUTCDay()]!];
 }
 
 const DEFAULT_WORKING_DAYS: WorkingDaysConfig = {

@@ -20,6 +20,7 @@ const TENANT_MODELS = new Set([
   "Notification",
   "AuditLog",
   "Site",
+  "AttendanceRecord",
 ]);
 
 const WHERE_OPERATIONS = new Set([

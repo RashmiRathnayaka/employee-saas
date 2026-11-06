@@ -20,6 +20,7 @@ import { leaveDocumentsRouter } from "./modules/leaveDocuments/leaveDocuments.ro
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 import { notificationsRouter } from "./modules/notifications/notifications.routes.js";
 import { sitesRouter } from "./modules/sites/sites.routes.js";
+import { attendanceRouter } from "./modules/attendance/attendance.routes.js";
 
 export function createApp() {
   const app = express();
@@ -48,6 +49,7 @@ export function createApp() {
   app.use("/api/v1", dashboardRouter);
   app.use("/api/v1", notificationsRouter);
   app.use("/api/v1", sitesRouter);
+  app.use("/api/v1", attendanceRouter);
 
   app.use(errorHandler);
 

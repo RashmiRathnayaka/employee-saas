@@ -33,6 +33,7 @@ model Company {
   notifications         Notification[]
   auditLogs             AuditLog[]
   sites                 Site[]
+  attendanceRecords     AttendanceRecord[]
 
   @@map("companies")
 }
@@ -123,6 +124,7 @@ model Employee {
   user          User?
   leaveBalances LeaveBalance[]
   leaveRequests LeaveRequest[] @relation("EmployeeLeaveRequests")
+  attendanceRecords AttendanceRecord[]
 
   @@unique([companyId, employeeCode])
   @@index([companyId])
@@ -342,10 +344,80 @@ model Site {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
+  attendanceCheckIns AttendanceRecord[]
+
   // Case-insensitive name uniqueness and the CHECKs are added by hand in the
   // migration SQL: see docs/phase2/database-schema-phase2.md.
   @@index([companyId, isActive, type])
   @@map("sites")
+}
+
+// One row per employee per work date: see docs/phase2/architecture-phase2.md §1.
+model AttendanceRecord {
+  id                     String           @id @default(uuid())
+  companyId              String
+  company                Company          @relation(fields: [companyId], references: [id])
+  employeeId             String
+  employee               Employee         @relation(fields: [employeeId], references: [id])
+  // The company-local date the shift starts on.
+  workDate               DateTime         @db.Date
+  status                 AttendanceStatus
+  // A snapshot, so changing a schedule later never rewrites past lateness. NULL
+  // on a day with no schedule (a holiday or weekly off).
+  scheduledStartAt       DateTime?
+  scheduledEndAt         DateTime?
+  checkInAt              DateTime?
+  checkOutAt             DateTime?
+  workedMinutes          Int?
+  lateMinutes            Int              @default(0)
+  earlyLeaveMinutes      Int              @default(0)
+  // ON DELETE RESTRICT, so a site in use can't be deleted (409 SITE_IN_USE).
+  // Prisma would default an optional relation to SET NULL.
+  checkInSiteId          String?
+  checkInSite            Site?            @relation(fields: [checkInSiteId], references: [id], onDelete: Restrict)
+  checkInLat             Decimal?         @db.Decimal(9, 6)
+  checkInLng             Decimal?         @db.Decimal(9, 6)
+  checkInAccuracyM       Int?
+  checkInDistanceM       Int?
+  checkInWithinRadius    Boolean?
+  checkInMocked          Boolean?
+  checkOutLat            Decimal?         @db.Decimal(9, 6)
+  checkOutLng            Decimal?         @db.Decimal(9, 6)
+  checkOutAccuracyM      Int?
+  checkOutDistanceM      Int?
+  checkOutWithinRadius   Boolean?
+  checkOutMocked         Boolean?
+  flags                  String[]         @default([])
+  source                 AttendanceSource
+  autoClosedAt           DateTime?
+  isCorrected            Boolean          @default(false)
+  // Lets a retried check-in find the row its lost response created.
+  checkInClientRequestId String?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  // The first makes double check-in impossible. The partial indexes and CHECKs
+  // are added by hand in the migration SQL.
+  @@unique([companyId, employeeId, workDate])
+  @@unique([companyId, employeeId, checkInClientRequestId])
+  @@index([companyId, workDate, status])
+  @@map("attendance_records")
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ON_LEAVE
+  HOLIDAY
+  ABSENT
+  INCOMPLETE
+}
+
+enum AttendanceSource {
+  MOBILE
+  SITE_VISIT
+  HR
+  SYSTEM
 }
 
 model AuditLog {
