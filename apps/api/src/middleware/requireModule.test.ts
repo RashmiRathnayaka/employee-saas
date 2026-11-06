@@ -9,8 +9,9 @@ import { errorHandler } from "./errorHandler.js";
 import { requireAuth } from "./requireAuth.js";
 import { requireModule } from "./requireModule.js";
 
-/** No router is gated yet (the first is Sites, in step 2.2), so this builds a
- * small one wired the way those will be, with the real auth and error handler. */
+/** A small router wired the way the real ones are, with the real auth and error
+ * handler, so these tests cover the middleware itself. Each gated module's own
+ * tests cover its real routes (see sites.test.ts). */
 function gatedApp() {
   const app = express();
   app.get("/gated", requireAuth, requireModule("attendance"), (_req, res) => {

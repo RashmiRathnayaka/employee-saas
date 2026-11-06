@@ -19,6 +19,7 @@ import { leaveRequestsRouter } from "./modules/leaveRequests/leaveRequests.route
 import { leaveDocumentsRouter } from "./modules/leaveDocuments/leaveDocuments.routes.js";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 import { notificationsRouter } from "./modules/notifications/notifications.routes.js";
+import { sitesRouter } from "./modules/sites/sites.routes.js";
 
 export function createApp() {
   const app = express();
@@ -46,6 +47,7 @@ export function createApp() {
   app.use("/api/v1", leaveDocumentsRouter);
   app.use("/api/v1", dashboardRouter);
   app.use("/api/v1", notificationsRouter);
+  app.use("/api/v1", sitesRouter);
 
   app.use(errorHandler);
 

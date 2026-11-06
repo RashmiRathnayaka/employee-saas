@@ -1,4 +1,5 @@
-import type { UpdateCompanySettingsRequest } from "@employee-saas/shared";
+import { isValidShiftLength, SHIFT_LENGTH_MESSAGE, type UpdateCompanySettingsRequest } from "@employee-saas/shared";
+import { diffFields } from "../../lib/auditDiff.js";
 import { invalidateEnabledModulesCache } from "../../lib/enabledModules.js";
 import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
@@ -41,17 +42,6 @@ export async function getOwnSettings(companyId: string) {
   return settings;
 }
 
-/** The before and after values of only the fields that actually changed. The
- * settings form sends every field, so logging the whole body would hide what
- * changed. Values are compared as JSON because two of the fields are objects. */
-function diffFields(before: Record<string, unknown>, after: Record<string, unknown>, fields: string[]) {
-  const changed = fields.filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
-  return {
-    before: Object.fromEntries(changed.map((field) => [field, before[field]])),
-    after: Object.fromEntries(changed.map((field) => [field, after[field]])),
-  };
-}
-
 export async function updateOwnSettings(params: {
   companyId: string;
   actorUserId: string;
@@ -62,6 +52,21 @@ export async function updateOwnSettings(params: {
     const existing = await tx.companySettings.findUnique({ where: { companyId: params.companyId } });
     if (!existing) {
       throw new ApiError(404, "NOT_FOUND", "Company settings not found.");
+    }
+
+    // Only when the PATCH touches the shift, so an unrelated save can't be
+    // blocked by what's stored. Sent alone, one end is judged against the
+    // stored other end, which the request schema can't see.
+    const { workStartTime, workEndTime } = params.data;
+    if (
+      (workStartTime !== undefined || workEndTime !== undefined) &&
+      !isValidShiftLength(workStartTime ?? existing.workStartTime, workEndTime ?? existing.workEndTime)
+    ) {
+      const field = workEndTime !== undefined ? "workEndTime" : "workStartTime";
+      throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed", {
+        formErrors: [],
+        fieldErrors: { [field]: [SHIFT_LENGTH_MESSAGE] },
+      });
     }
 
     const data: Record<string, unknown> = { ...params.data };

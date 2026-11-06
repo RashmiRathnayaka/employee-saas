@@ -32,6 +32,7 @@ model Company {
   leaveRequestDocuments LeaveRequestDocument[]
   notifications         Notification[]
   auditLogs             AuditLog[]
+  sites                 Site[]
 
   @@map("companies")
 }
@@ -150,6 +151,7 @@ model User {
   leaveApprovals       LeaveApproval[]        @relation("LeaveApprovalApprover")
   revokedLeaveRequests LeaveRequest[]         @relation("LeaveRequestRevokedBy")
   reviewedDocuments    LeaveRequestDocument[] @relation("DocumentReviewer")
+  createdSites         Site[]                 @relation("SiteCreatedBy")
 
   @@unique([companyId, email])
   @@index([companyId])
@@ -323,6 +325,29 @@ model Notification {
   @@map("notifications")
 }
 
+model Site {
+  id              String    @id @default(uuid())
+  companyId       String
+  company         Company   @relation(fields: [companyId], references: [id])
+  name            String
+  type            SiteType
+  address         String?
+  latitude        Decimal?  @db.Decimal(9, 6)
+  longitude       Decimal?  @db.Decimal(9, 6)
+  radiusMeters    Int
+  gpsRequired     Boolean
+  isActive        Boolean   @default(true)
+  createdByUserId String
+  createdBy       User      @relation("SiteCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Case-insensitive name uniqueness and the CHECKs are added by hand in the
+  // migration SQL: see docs/phase2/database-schema-phase2.md.
+  @@index([companyId, isActive, type])
+  @@map("sites")
+}
+
 model AuditLog {
   id          String   @id @default(uuid())
   companyId   String?
@@ -338,6 +363,11 @@ model AuditLog {
   @@index([companyId, createdAt])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+enum SiteType {
+  OFFICE
+  EXTERNAL
 }
 
 enum CompanyStatus {

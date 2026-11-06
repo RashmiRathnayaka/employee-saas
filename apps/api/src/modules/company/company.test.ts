@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
-import { CompanySettingsSchema } from "@employee-saas/shared";
+import { CompanySettingsSchema, SHIFT_LENGTH_MESSAGE } from "@employee-saas/shared";
 import { createApp } from "../../app.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { createTestCompany, createTestUser, platformLoginAs, setUpCompanyWithUser } from "../../test/helpers.js";
@@ -109,6 +109,77 @@ describe("company profile + settings + holidays", () => {
       const res = await patchSettings(app, token, { workStartTime: "22:00", workEndTime: "06:00" });
 
       expect(res.status).toBe(200);
+    });
+
+    describe("default shift length (1-16 hours)", () => {
+      it.each([
+        [{ workStartTime: "09:00", workEndTime: "09:00" }, "workEndTime"], // 24 hours
+        [{ workStartTime: "09:00", workEndTime: "09:30" }, "workEndTime"], // 30 minutes
+        [{ workStartTime: "06:00", workEndTime: "22:01" }, "workEndTime"], // just over 16 hours
+        // Sent alone, each is judged against the stored other end (09:00-17:00).
+        [{ workEndTime: "09:30" }, "workEndTime"],
+        [{ workEndTime: "09:00" }, "workEndTime"],
+        [{ workStartTime: "17:00" }, "workStartTime"],
+        [{ workStartTime: "22:00" }, "workStartTime"], // 19 hours, across midnight
+      ])("rejects %j on %s and changes nothing", async (body, field) => {
+        const app = createApp();
+        const { company, token } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+
+        const res = await patchSettings(app, token, body);
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe("VALIDATION_ERROR");
+        expect(res.body.error.details.fieldErrors[field]).toEqual([SHIFT_LENGTH_MESSAGE]);
+        const settings = await platformPrisma.companySettings.findUniqueOrThrow({ where: { companyId: company.id } });
+        expect(settings).toMatchObject({ workStartTime: "09:00", workEndTime: "17:00" });
+        const audits = await platformPrisma.auditLog.count({ where: { companyId: company.id, action: "COMPANY_SETTINGS_UPDATED" } });
+        expect(audits).toBe(0);
+      });
+
+      it.each([
+        [{ workStartTime: "08:00", workEndTime: "09:00" }], // exactly 1 hour
+        [{ workStartTime: "06:00", workEndTime: "22:00" }], // exactly 16 hours
+        [{ workStartTime: "16:00", workEndTime: "08:00" }], // exactly 16 hours, across midnight
+        [{ workEndTime: "18:00" }], // judged against the stored start
+        [{ workStartTime: "08:30" }], // judged against the stored end
+      ])("accepts %j", async (body) => {
+        const app = createApp();
+        const { token } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+
+        const res = await patchSettings(app, token, body);
+
+        expect(res.status).toBe(200);
+        expect(res.body.settings).toMatchObject(body);
+      });
+
+      it("doesn't block an unrelated save when the stored shift already breaks the rule", async () => {
+        const app = createApp();
+        const { company, token } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+        // Possible for a row saved before the rule existed.
+        await platformPrisma.companySettings.update({
+          where: { companyId: company.id },
+          data: { workStartTime: "09:00", workEndTime: "09:00" },
+        });
+
+        const res = await patchSettings(app, token, { lateGraceMinutes: 20 });
+
+        expect(res.status).toBe(200);
+      });
+    });
+
+    it("rejects a default GPS radius a site couldn't use, and accepts one it could", async () => {
+      const app = createApp();
+      const { token } = await setUpCompanyWithUser(app, { role: "COMPANY_ADMIN" });
+
+      for (const gpsRadiusMeters of [0, 24, 5001]) {
+        const res = await patchSettings(app, token, { gpsRadiusMeters });
+        expect(res.status).toBe(400);
+        expect(res.body.error.details.fieldErrors.gpsRadiusMeters).toEqual(["Must be between 25 and 5000"]);
+      }
+
+      const res = await patchSettings(app, token, { gpsRadiusMeters: 500, gpsCheckinEnabledDefault: true });
+      expect(res.status).toBe(200);
+      expect(res.body.settings).toMatchObject({ gpsRadiusMeters: 500, gpsCheckinEnabledDefault: true });
     });
 
     it.each([
@@ -232,6 +303,8 @@ describe("company profile + settings + holidays", () => {
         [{ checkinReminderOffsetMinutes: 121 }],
         [{ gpsMaxAccuracyMeters: 9 }],
         [{ gpsRetentionDays: 29 }],
+        [{ gpsRadiusMeters: 24 }],
+        [{ gpsRadiusMeters: 5001 }],
       ])("rejects %j", async (data) => {
         const company = await createTestCompany();
         await expect(platformPrisma.companySettings.update({ where: { companyId: company.id }, data })).rejects.toThrow();
