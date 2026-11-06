@@ -263,7 +263,7 @@ describe("attendance module", () => {
       expect(record).toMatchObject({
         status: "PRESENT",
         lateMinutes: 0,
-        flags: ["NON_WORKING_DAY"],
+        flags: ["NON_WORKING_DAY", "NO_OFFICE_SITE"],
         scheduledStartAt: null,
         scheduledEndAt: null,
       });
@@ -275,7 +275,7 @@ describe("attendance module", () => {
       const record = await checkInAt(alex, colombo("07", "09:00:00"));
 
       expect(record.scheduledEndAt).toBe(colombo("07", "13:00:00").toISOString());
-      expect(record.flags).toEqual([]);
+      expect(record.flags).toEqual(["NO_OFFICE_SITE"]);
     });
 
     it("a company holiday is a non-working day", async () => {
@@ -284,7 +284,7 @@ describe("attendance module", () => {
 
       const record = await checkInAt(alex, colombo("03", "15:00:00"));
 
-      expect(record).toMatchObject({ status: "PRESENT", flags: ["NON_WORKING_DAY"], scheduledStartAt: null });
+      expect(record).toMatchObject({ status: "PRESENT", flags: ["NON_WORKING_DAY", "NO_OFFICE_SITE"], scheduledStartAt: null });
     });
 
     async function approvedLeave(company: { id: string }, person: Person, extra: object = {}) {
@@ -309,7 +309,7 @@ describe("attendance module", () => {
 
       const record = await checkInAt(alex, colombo("03", "09:30:00"));
 
-      expect(record).toMatchObject({ status: "LATE", lateMinutes: 30, flags: ["ON_APPROVED_LEAVE"] });
+      expect(record).toMatchObject({ status: "LATE", lateMinutes: 30, flags: ["ON_APPROVED_LEAVE", "NO_OFFICE_SITE"] });
       expect((await platformPrisma.leaveRequest.findUniqueOrThrow({ where: { id: leave.id } })).status).toBe("APPROVED");
     });
 
@@ -318,7 +318,7 @@ describe("attendance module", () => {
       await approvedLeave(company, alex, { startHalfDay: true, totalDays: 0.5 });
 
       const record = await checkInAt(alex, colombo("03", "13:30:00"));
-      expect(record).toMatchObject({ status: "PRESENT", lateMinutes: 0, flags: ["HALF_DAY_LEAVE"] });
+      expect(record).toMatchObject({ status: "PRESENT", lateMinutes: 0, flags: ["HALF_DAY_LEAVE", "NO_OFFICE_SITE"] });
 
       const out = await postCheckOut(await at(alex, colombo("03", "15:00:00")));
       expect(out.body.record.earlyLeaveMinutes).toBe(0);
@@ -328,7 +328,7 @@ describe("attendance module", () => {
       const { company, alex } = await setUp();
       await approvedLeave(company, alex, { status: "PENDING_MANAGER" });
 
-      expect((await checkInAt(alex, colombo("03", "09:00:00"))).flags).toEqual([]);
+      expect((await checkInAt(alex, colombo("03", "09:00:00"))).flags).toEqual(["NO_OFFICE_SITE"]);
     });
 
     it("another employee's leave doesn't count", async () => {
@@ -336,7 +336,7 @@ describe("attendance module", () => {
       const sam = await addPerson(company);
       await approvedLeave(company, sam);
 
-      expect((await checkInAt(alex, colombo("03", "09:00:00"))).flags).toEqual([]);
+      expect((await checkInAt(alex, colombo("03", "09:00:00"))).flags).toEqual(["NO_OFFICE_SITE"]);
     });
 
     it("is refused after the day's close time", async () => {
@@ -622,7 +622,7 @@ describe("attendance module", () => {
       const res = await postCheckOut(await at(alex, colombo("04", "00:00:00")));
 
       expect(res.body.record.workedMinutes).toBe(1020);
-      expect(res.body.record.flags).toEqual(["LONG_SHIFT"]);
+      expect(res.body.record.flags).toEqual(["NO_OFFICE_SITE", "LONG_SHIFT"]);
     });
 
     it("a check-in on a day off stays open for 16 hours, then is closed", async () => {
@@ -745,6 +745,8 @@ describe("attendance module", () => {
         },
         record: null,
         nextAction: "CHECK_IN",
+        gpsRequired: false,
+        officeSite: null,
       });
     });
 
@@ -1026,6 +1028,468 @@ describe("attendance module", () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("SITE_IN_USE");
+    });
+  });
+
+  describe("GPS verification", () => {
+    /** Colombo. 0.001 degrees of latitude is about 111 m. */
+    const OFFICE = { latitude: 6.9271, longitude: 79.8612 };
+    const metresNorth = (metres: number, from = OFFICE) => from.latitude + (metres / 111.19) * 0.001;
+
+    function fix(metres: number, extra: object = {}) {
+      return {
+        latitude: metresNorth(metres),
+        longitude: OFFICE.longitude,
+        accuracy: 10,
+        mocked: false,
+        capturedAt: new Date().toISOString(),
+        ...extra,
+      };
+    }
+
+    async function addSite(company: { id: string }, extra: object = {}) {
+      const creator = await platformPrisma.user.findFirstOrThrow({ where: { companyId: company.id } });
+      return platformPrisma.site.create({
+        data: {
+          companyId: company.id,
+          createdByUserId: creator.id,
+          name: `Head Office ${crypto.randomBytes(2).toString("hex")}`,
+          type: "OFFICE",
+          ...OFFICE,
+          radiusMeters: 200,
+          gpsRequired: true,
+          ...extra,
+        },
+      });
+    }
+
+    async function setUpGps(extra: object = {}, modules = { attendance: true, sites: true }) {
+      const company = await setUpCompany({}, modules);
+      const alex = await addPerson(company);
+      const site = await addSite(company, extra);
+      return { company, alex, site };
+    }
+
+    const NINE = colombo("03", "09:00:00");
+    const FIVE = colombo("03", "17:00:00");
+
+    function postOut(token: string, location?: object) {
+      return request(app).post("/api/v1/attendance/check-out").set("Authorization", token).send(location ? { location } : {});
+    }
+
+    /** Checked in at the office, inside the radius, ready to check out at five. */
+    async function checkedIn(extra: object = {}) {
+      const setup = await setUpGps(extra);
+      const res = await postCheckIn(await at(setup.alex, NINE), newId(), { location: fix(50) });
+      expect(res.status).toBe(201);
+      vi.setSystemTime(FIVE);
+      return { ...setup, token: await at(setup.alex, FIVE) };
+    }
+
+    describe("check-in at an office that requires GPS", () => {
+      it("inside the radius: accepted, and everything is stored with the office", async () => {
+        const { alex, site } = await setUpGps();
+        const token = await at(alex, NINE);
+
+        const res = await postCheckIn(token, newId(), { location: fix(50, { accuracy: 12.4 }) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record).toMatchObject({
+          checkInSiteId: site.id,
+          checkInAccuracyM: 12,
+          checkInWithinRadius: true,
+          checkInMocked: false,
+          flags: [],
+        });
+        expect(Math.abs(res.body.record.checkInDistanceM - 50)).toBeLessThanOrEqual(1);
+        expect(res.body.record.checkInLat).toBeCloseTo(metresNorth(50), 5);
+        expect(res.body.record.checkInLng).toBeCloseTo(OFFICE.longitude, 5);
+      });
+
+      it("no location: 422 LOCATION_REQUIRED, nothing saved, nothing audited", async () => {
+        const { company, alex } = await setUpGps();
+
+        const res = await postCheckIn(await at(alex, NINE));
+
+        expect(res.status).toBe(422);
+        expect(res.body.error.code).toBe("LOCATION_REQUIRED");
+        expect(await rowsFor(alex)).toHaveLength(0);
+        expect(await platformPrisma.auditLog.count({ where: { companyId: company.id, action: "ATTENDANCE_CHECKIN_REJECTED" } })).toBe(0);
+      });
+
+      it("outside with a good fix: 422 with the distance, nothing saved, nothing audited", async () => {
+        const { company, alex, site } = await setUpGps();
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(850) });
+
+        expect(res.status).toBe(422);
+        expect(res.body.error.code).toBe("OUTSIDE_SITE_RADIUS");
+        expect(res.body.error.details).toMatchObject({ radiusM: 200, siteName: site.name });
+        expect(Math.abs(res.body.error.details.distanceM - 850)).toBeLessThanOrEqual(1);
+        expect(await rowsFor(alex)).toHaveLength(0);
+        expect(await platformPrisma.auditLog.count({ where: { companyId: company.id, action: "ATTENDANCE_CHECKIN_REJECTED" } })).toBe(0);
+      });
+
+      it("uses the company's accuracy setting", async () => {
+        const { company, alex } = await setUpGps();
+        await platformPrisma.companySettings.update({ where: { companyId: company.id }, data: { gpsMaxAccuracyMeters: 500 } });
+
+        // With the default 100 this fix would be poor, and so let in with a flag.
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(250, { accuracy: 120 }) });
+
+        expect(res.status).toBe(422);
+        expect(res.body.error.code).toBe("OUTSIDE_SITE_RADIUS");
+      });
+
+      it("poor accuracy overlapping the edge: accepted and flagged", async () => {
+        const { alex } = await setUpGps();
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(250, { accuracy: 120 }) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record).toMatchObject({ flags: ["LOW_ACCURACY"], checkInWithinRadius: false, checkInAccuracyM: 120 });
+      });
+
+      it("poor accuracy, certainly outside: rejected", async () => {
+        const { alex } = await setUpGps();
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(500, { accuracy: 150 }) });
+
+        expect(res.body.error.code).toBe("OUTSIDE_SITE_RADIUS");
+      });
+
+      it("poor accuracy, certainly inside: accepted with no flag", async () => {
+        const { alex } = await setUpGps();
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(50, { accuracy: 120 }) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record.flags).toEqual([]);
+      });
+
+      it("a stale fix: accepted and flagged", async () => {
+        const { alex } = await setUpGps();
+        const token = await at(alex, NINE);
+        const capturedAt = new Date(NINE.getTime() - 3 * 60_000).toISOString();
+
+        const res = await postCheckIn(token, newId(), { location: fix(50, { capturedAt }) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record.flags).toEqual(["STALE_LOCATION"]);
+      });
+
+      it("a mock: 422, nothing saved, and an audit row with the reason and no coordinates", async () => {
+        const { company, alex, site } = await setUpGps();
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(0, { mocked: true }) });
+
+        expect(res.status).toBe(422);
+        expect(res.body.error.code).toBe("MOCK_LOCATION_DETECTED");
+        expect(await rowsFor(alex)).toHaveLength(0);
+        const audits = await platformPrisma.auditLog.findMany({ where: { companyId: company.id, action: "ATTENDANCE_CHECKIN_REJECTED" } });
+        expect(audits).toHaveLength(1);
+        expect(audits[0]).toMatchObject({ entityType: "Site", entityId: site.id, metadata: { reason: "MOCK_LOCATION_DETECTED", siteId: site.id } });
+        expect(JSON.stringify(audits[0]!.metadata)).not.toMatch(/lat|lng|6\.92|79\.86/i);
+      });
+
+      it("a malformed location is a 400, and the distance a phone sends is ignored", async () => {
+        const { alex } = await setUpGps();
+        const token = await at(alex, NINE);
+
+        const bad = await postCheckIn(token, newId(), { location: fix(50, { latitude: 91 }) });
+        expect(bad.status).toBe(400);
+
+        const lying = await postCheckIn(token, newId(), { location: fix(850, { distanceM: 0, withinRadius: true }) });
+        expect(lying.body.error.code).toBe("OUTSIDE_SITE_RADIUS");
+      });
+
+      it("where the day already stands comes first: a second check-in says so, not that you're too far", async () => {
+        const { alex } = await setUpGps();
+        await postCheckIn(await at(alex, NINE), newId(), { location: fix(50) });
+
+        const res = await postCheckIn(await at(alex, colombo("03", "09:05:00")), newId(), { location: fix(850) });
+
+        expect(res.status).toBe(409);
+        expect(res.body.error.code).toBe("ALREADY_CHECKED_IN");
+      });
+
+      it("a retry gets its record back, wherever the phone is now", async () => {
+        const { alex } = await setUpGps();
+        const id = newId();
+        const first = await postCheckIn(await at(alex, NINE), id, { location: fix(50) });
+
+        const retry = await postCheckIn(await at(alex, colombo("03", "09:01:00")), id);
+
+        expect(retry.status).toBe(200);
+        expect(retry.body.record.id).toBe(first.body.record.id);
+      });
+    });
+
+    describe("which office", () => {
+      it("no office: no GPS at all, and flagged", async () => {
+        const company = await setUpCompany({}, { attendance: true, sites: true });
+        const alex = await addPerson(company);
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(0) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record).toMatchObject({ checkInSiteId: null, flags: ["NO_OFFICE_SITE"] });
+        expect((await rowsFor(alex))[0]).toMatchObject({ checkInLat: null, checkInLng: null, checkInAccuracyM: null, checkInMocked: null });
+      });
+
+      it("the office doesn't require GPS: a location sent anyway is discarded (Q6), and the office is still recorded", async () => {
+        const { alex, site } = await setUpGps({ gpsRequired: false });
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(5000, { mocked: true }) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record).toMatchObject({ checkInSiteId: site.id, flags: [] });
+        expect((await rowsFor(alex))[0]).toMatchObject({
+          checkInLat: null,
+          checkInLng: null,
+          checkInAccuracyM: null,
+          checkInDistanceM: null,
+          checkInWithinRadius: null,
+          checkInMocked: null,
+        });
+      });
+
+      it("several offices that don't require GPS: no office is guessed", async () => {
+        const { company, alex } = await setUpGps({ gpsRequired: false });
+        await addSite(company, { gpsRequired: false });
+
+        const res = await postCheckIn(await at(alex, NINE));
+
+        expect(res.body.record).toMatchObject({ checkInSiteId: null, flags: [] });
+      });
+
+      it("several that require GPS: judged against the nearest", async () => {
+        const { company, alex, site: head } = await setUpGps();
+        const branch = await addSite(company, { latitude: metresNorth(5000), longitude: OFFICE.longitude });
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(4950) });
+
+        expect(res.status).toBe(201);
+        expect(res.body.record.checkInSiteId).toBe(branch.id);
+        expect(res.body.record.checkInSiteId).not.toBe(head.id);
+      });
+
+      it("an inactive office isn't used", async () => {
+        const { company, alex, site } = await setUpGps();
+        await platformPrisma.site.update({ where: { id: site.id }, data: { isActive: false } });
+        const active = await addSite(company, { latitude: metresNorth(5000), longitude: OFFICE.longitude });
+
+        const res = await postCheckIn(await at(alex, NINE), newId(), { location: fix(0) });
+
+        expect(res.body.error.details.siteName).toBe(active.name);
+      });
+
+      it("an external site isn't an office", async () => {
+        const { alex } = await setUpGps({ type: "EXTERNAL" });
+
+        const res = await postCheckIn(await at(alex, NINE));
+
+        expect(res.status).toBe(201);
+        expect(res.body.record.flags).toEqual(["NO_OFFICE_SITE"]);
+      });
+
+      it("with the sites module off, a leftover GPS office can't lock anyone out", async () => {
+        const { alex } = await setUpGps({}, { attendance: true, sites: false });
+        const token = await at(alex, NINE);
+
+        expect((await getToday(token)).body).toMatchObject({ gpsRequired: false, officeSite: null });
+        const res = await postCheckIn(token);
+
+        expect(res.status).toBe(201);
+        expect(res.body.record).toMatchObject({ checkInSiteId: null, flags: ["NO_OFFICE_SITE"] });
+      });
+
+      it("another company's office is never used, for the rules or the Home card", async () => {
+        await setUpGps();
+        const company = await setUpCompany({}, { attendance: true, sites: true });
+        const bea = await addPerson(company);
+        const token = await at(bea, NINE);
+
+        expect((await getToday(token)).body).toMatchObject({ gpsRequired: false, officeSite: null });
+        const res = await postCheckIn(token);
+
+        expect(res.status).toBe(201);
+        expect(res.body.record).toMatchObject({ checkInSiteId: null, flags: ["NO_OFFICE_SITE"] });
+      });
+
+      it("a mock rejection is audited only in the employee's own company", async () => {
+        const { alex, company } = await setUpGps();
+        const other = await setUpGps();
+
+        await postCheckIn(await at(alex, NINE), newId(), { location: fix(0, { mocked: true }) });
+
+        expect(await platformPrisma.auditLog.count({ where: { companyId: company.id, action: "ATTENDANCE_CHECKIN_REJECTED" } })).toBe(1);
+        expect(await platformPrisma.auditLog.count({ where: { companyId: other.company.id, action: "ATTENDANCE_CHECKIN_REJECTED" } })).toBe(0);
+      });
+    });
+
+    describe("check-out never rejects for GPS", () => {
+      it("inside: closes with the reading and no flag", async () => {
+        const { token } = await checkedIn();
+
+        const res = await postOut(token, fix(20));
+
+        expect(res.status).toBe(200);
+        expect(res.body.record).toMatchObject({ checkOutWithinRadius: true, checkOutMocked: false, flags: [] });
+        expect(res.body.record.checkOutLat).toBeCloseTo(metresNorth(20), 5);
+      });
+
+      it("no location: closes, flagged, nothing stored", async () => {
+        const { token } = await checkedIn();
+
+        const res = await postOut(token);
+
+        expect(res.status).toBe(200);
+        expect(res.body.record).toMatchObject({ checkOutAt: FIVE.toISOString(), flags: ["LOCATION_UNAVAILABLE_AT_CHECKOUT"], checkOutLat: null, checkOutWithinRadius: null });
+      });
+
+      it("outside: closes, flagged", async () => {
+        const { token } = await checkedIn();
+
+        const res = await postOut(token, fix(850));
+
+        expect(res.status).toBe(200);
+        expect(res.body.record).toMatchObject({ flags: ["OUTSIDE_RADIUS_AT_CHECKOUT"], checkOutWithinRadius: false });
+      });
+
+      it("poor accuracy: closes, flagged", async () => {
+        const { token } = await checkedIn();
+
+        const res = await postOut(token, fix(850, { accuracy: 300 }));
+
+        expect(res.status).toBe(200);
+        expect(res.body.record.flags).toEqual(["LOW_ACCURACY"]);
+      });
+
+      it("a mock: closes, flagged, with no audit row", async () => {
+        const { company, token } = await checkedIn();
+
+        const res = await postOut(token, fix(0, { mocked: true }));
+
+        expect(res.status).toBe(200);
+        expect(res.body.record).toMatchObject({ flags: ["MOCK_LOCATION_AT_CHECKOUT"], checkOutMocked: true });
+        expect(await platformPrisma.auditLog.count({ where: { companyId: company.id, action: { contains: "ATTENDANCE" } } })).toBe(0);
+      });
+
+      it("a stale fix: closes, flagged", async () => {
+        const { token } = await checkedIn();
+
+        const res = await postOut(token, fix(10, { capturedAt: new Date(FIVE.getTime() - 3 * 60_000).toISOString() }));
+
+        expect(res.status).toBe(200);
+        expect(res.body.record.flags).toEqual(["STALE_LOCATION"]);
+      });
+
+      it("a flag from the check-in isn't repeated", async () => {
+        const { alex } = await setUpGps();
+        await postCheckIn(await at(alex, NINE), newId(), { location: fix(250, { accuracy: 120 }) });
+
+        const res = await postOut(await at(alex, FIVE), fix(250, { accuracy: 120 }));
+
+        expect(res.body.record.flags).toEqual(["LOW_ACCURACY"]);
+      });
+
+      it("is compared with the office the check-in used, not the nearest one now", async () => {
+        const { company, token, site } = await checkedIn();
+        await addSite(company, { latitude: metresNorth(5000), longitude: OFFICE.longitude });
+
+        const res = await postOut(token, fix(5000));
+
+        expect(res.body.record.checkInSiteId).toBe(site.id);
+        expect(res.body.record.flags).toEqual(["OUTSIDE_RADIUS_AT_CHECKOUT"]);
+      });
+
+      it("the office stopped requiring GPS mid-shift: a location sent is discarded", async () => {
+        const { alex, token, site } = await checkedIn();
+        await platformPrisma.site.update({ where: { id: site.id }, data: { gpsRequired: false } });
+
+        const res = await postOut(token, fix(850));
+
+        expect(res.status).toBe(200);
+        expect(res.body.record.flags).toEqual([]);
+        expect((await rowsFor(alex))[0]).toMatchObject({ checkOutLat: null, checkOutDistanceM: null });
+      });
+
+      it("a day that started with no office isn't checked when one appears later", async () => {
+        const company = await setUpCompany({}, { attendance: true, sites: true });
+        const alex = await addPerson(company);
+        await postCheckIn(await at(alex, NINE));
+        await addSite(company);
+        const token = await at(alex, FIVE);
+
+        expect((await getToday(token)).body).toMatchObject({ gpsRequired: false, officeSite: null, nextAction: "CHECK_OUT" });
+        const res = await postOut(token);
+
+        expect(res.status).toBe(200);
+        expect(res.body.record.flags).toEqual(["NO_OFFICE_SITE"]);
+      });
+    });
+
+    describe("GET /attendance/me/today", () => {
+      it("one office: says so, with its name and radius, and no coordinates", async () => {
+        const { alex, site } = await setUpGps();
+
+        const res = await getToday(await at(alex, NINE));
+
+        expect(AttendanceTodaySchema.strict().safeParse(res.body).success).toBe(true);
+        expect(res.body).toMatchObject({ gpsRequired: true, officeSite: { id: site.id, name: site.name, radiusMeters: 200 } });
+        expect(JSON.stringify(res.body.officeSite)).not.toMatch(/latitude|longitude|6\.92|79\.86/);
+      });
+
+      it("one office that doesn't require GPS: named, and no location is asked for", async () => {
+        const { alex, site } = await setUpGps({ gpsRequired: false });
+
+        const res = await getToday(await at(alex, NINE));
+
+        expect(res.body).toMatchObject({ gpsRequired: false, officeSite: { id: site.id } });
+      });
+
+      it("several offices, one requiring GPS: asks for a location, and names none", async () => {
+        const { company, alex } = await setUpGps({ gpsRequired: false });
+        await addSite(company);
+
+        const res = await getToday(await at(alex, NINE));
+
+        expect(res.body).toMatchObject({ gpsRequired: true, officeSite: null });
+      });
+
+      it("once checked in, describes the check-in's office", async () => {
+        const { company, alex, site } = await setUpGps();
+        await postCheckIn(await at(alex, NINE), newId(), { location: fix(50) });
+        await addSite(company);
+
+        const res = await getToday(await at(alex, colombo("03", "10:00:00")));
+
+        expect(res.body).toMatchObject({ nextAction: "CHECK_OUT", gpsRequired: true, officeSite: { id: site.id } });
+      });
+
+      it("after check-out, asks for nothing", async () => {
+        const { alex, token } = await checkedIn();
+        await postOut(token, fix(10));
+
+        const res = await getToday(await at(alex, colombo("03", "17:01:00")));
+
+        expect(res.body).toMatchObject({ nextAction: "DONE", gpsRequired: false, officeSite: null });
+      });
+    });
+
+    describe("who sees the position", () => {
+      it("a manager's view of a GPS record has the distance and the answer, and no coordinates", async () => {
+        const { company, alex } = await setUpGps();
+        const morgan = await addPerson(company, "MANAGER");
+        await platformPrisma.employee.update({ where: { id: alex.employeeId! }, data: { managerId: morgan.employeeId! } });
+        const { body } = await postCheckIn(await at(alex, NINE), newId(), { location: fix(50) });
+
+        const res = await request(app).get(`/api/v1/attendance/${body.record.id as string}`).set("Authorization", await at(morgan, NINE));
+
+        expect(res.body.record).toMatchObject({ checkInWithinRadius: true });
+        expect(JSON.stringify(res.body)).not.toMatch(/Lat|Lng/);
+      });
     });
   });
 

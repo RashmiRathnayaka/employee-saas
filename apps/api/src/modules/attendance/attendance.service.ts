@@ -1,7 +1,8 @@
-import type { AttendanceRecord } from "@prisma/client";
+import type { AttendanceRecord, CompanySettings, Site } from "@prisma/client";
 import {
   addDaysToIsoDate,
   getWorkDate,
+  isModuleEnabled,
   isoDateToUtcDate,
   todayInTimezone,
   utcDateToIsoDate,
@@ -11,11 +12,14 @@ import {
   type AttendanceRecordDto,
   type AttendanceRecordWithCoordinatesDto,
   type AttendanceTodayDto,
+  type LocationDto,
   type PaginatedResponse,
   type Role,
 } from "@employee-saas/shared";
+import { writeAudit } from "../../lib/audit.js";
 import { getCompanyTimezone } from "../../lib/companyTime.js";
 import { ApiError } from "../../lib/errors.js";
+import { chooseOffice, evaluateCheckInLocation, evaluateCheckOutLocation, type GpsReading, type GpsSite } from "../../lib/gpsVerification.js";
 import { normalizeWorkingDays } from "../../lib/leaveDays.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { getTenantPrisma, type TenantPrisma } from "../../lib/tenantPrisma.js";
@@ -106,7 +110,81 @@ async function getScheduleForDate(params: {
   });
 }
 
+function toGpsSite(site: Site): GpsSite {
+  return {
+    id: site.id,
+    name: site.name,
+    latitude: site.latitude?.toNumber() ?? null,
+    longitude: site.longitude?.toNumber() ?? null,
+    radiusMeters: site.radiusMeters,
+    gpsRequired: site.gpsRequired,
+  };
+}
+
+/** The offices a check-in can belong to. With the `sites` module off, an admin can't
+ * see or edit them, so a leftover "GPS required" office mustn't lock anyone out. */
+async function getActiveOffices(tenant: TenantPrisma, settings: CompanySettings): Promise<GpsSite[]> {
+  if (!isModuleEnabled(settings, "sites")) return [];
+  const offices = await tenant.site.findMany({
+    where: { companyId: settings.companyId, type: "OFFICE", isActive: true },
+    orderBy: { name: "asc" },
+  });
+  return offices.map(toGpsSite);
+}
+
+/** The office a check-out is compared with: the one its check-in used, not whichever
+ * is nearest now. A day that started with no office isn't checked at the end either. */
+async function getCheckOutSite(tenant: TenantPrisma, settings: CompanySettings, record: AttendanceRecord): Promise<GpsSite | null> {
+  if (!record.checkInSiteId || !isModuleEnabled(settings, "sites")) return null;
+  const site = await tenant.site.findFirst({ where: { companyId: settings.companyId, id: record.checkInSiteId } });
+  return site && toGpsSite(site);
+}
+
+/** What the Home card needs to know before the employee taps, given that the phone's
+ * location isn't read until they do. */
+async function getGpsNeed(
+  tenant: TenantPrisma,
+  settings: CompanySettings,
+  record: AttendanceRecord | null,
+  nextAction: AttendanceNextAction,
+): Promise<Pick<AttendanceTodayDto, "gpsRequired" | "officeSite">> {
+  const summary = (site: GpsSite) => ({ id: site.id, name: site.name, radiusMeters: site.radiusMeters });
+
+  if (nextAction === "CHECK_IN") {
+    const offices = await getActiveOffices(tenant, settings);
+    return { gpsRequired: offices.some((office) => office.gpsRequired), officeSite: offices.length === 1 ? summary(offices[0]!) : null };
+  }
+  if (nextAction === "CHECK_OUT") {
+    const site = await getCheckOutSite(tenant, settings, record!);
+    return { gpsRequired: site?.gpsRequired ?? false, officeSite: site && summary(site) };
+  }
+  return { gpsRequired: false, officeSite: null };
+}
+
+function checkInColumns(reading: GpsReading) {
+  return {
+    checkInLat: reading.latitude,
+    checkInLng: reading.longitude,
+    checkInAccuracyM: reading.accuracyM,
+    checkInDistanceM: reading.distanceM,
+    checkInWithinRadius: reading.withinRadius,
+    checkInMocked: reading.mocked,
+  };
+}
+
+function checkOutColumns(reading: GpsReading) {
+  return {
+    checkOutLat: reading.latitude,
+    checkOutLng: reading.longitude,
+    checkOutAccuracyM: reading.accuracyM,
+    checkOutDistanceM: reading.distanceM,
+    checkOutWithinRadius: reading.withinRadius,
+    checkOutMocked: reading.mocked,
+  };
+}
+
 type CurrentDay = {
+  settings: CompanySettings;
   workDate: string;
   schedule: EffectiveSchedule;
   /** The record the employee is acting on now, if any (§1.3). */
@@ -162,12 +240,12 @@ async function getCurrentDay(params: {
 
   const schedule = await scheduleFor(workDate);
   const nextAction = getNextAction({ record, schedule, autoCheckoutAfterMinutes: row.autoCheckoutAfterMinutes, now });
-  return { workDate, schedule, record, latestCheckIn, nextAction };
+  return { settings: row, workDate, schedule, record, latestCheckIn, nextAction };
 }
 
 export async function getToday(params: { companyId: string; employeeId: string }): Promise<AttendanceTodayDto> {
   const tenant = getTenantPrisma(params.companyId);
-  const { workDate, schedule, record, nextAction } = await getCurrentDay({ tenant, ...params, now: new Date() });
+  const { settings, workDate, schedule, record, nextAction } = await getCurrentDay({ tenant, ...params, now: new Date() });
 
   // A record shows the schedule it was judged against, which may since have changed.
   const start = record?.scheduledStartAt ?? schedule.scheduledStartAt;
@@ -183,6 +261,7 @@ export async function getToday(params: { companyId: string; employeeId: string }
     },
     record: record && toRecordWithCoordinatesDto(record),
     nextAction,
+    ...(await getGpsNeed(tenant, settings, record, nextAction)),
   };
 }
 
@@ -201,9 +280,11 @@ function dayClosed() {
 export async function checkIn(params: {
   companyId: string;
   employeeId: string;
+  userId: string;
   clientRequestId: string;
+  location: LocationDto | null;
 }): Promise<{ record: AttendanceRecordWithCoordinatesDto; created: boolean }> {
-  const { companyId, employeeId, clientRequestId } = params;
+  const { companyId, employeeId, userId, clientRequestId, location } = params;
   const tenant = getTenantPrisma(companyId);
   const now = new Date();
   const findRetried = () => tenant.attendanceRecord.findFirst({ where: { companyId, employeeId, checkInClientRequestId: clientRequestId } });
@@ -213,10 +294,43 @@ export async function checkIn(params: {
   const retried = await findRetried();
   if (retried) return { record: toRecordWithCoordinatesDto(retried), created: false };
 
-  const { workDate, schedule, record, nextAction } = await getCurrentDay({ tenant, companyId, employeeId, now });
+  const { settings, workDate, schedule, record, nextAction } = await getCurrentDay({ tenant, companyId, employeeId, now });
   if (nextAction === "CHECK_OUT") throw alreadyCheckedIn(record!);
   if (nextAction === "DONE") throw alreadyCheckedOut();
   if (nextAction === "DAY_CLOSED") throw dayClosed();
+
+  const offices = await getActiveOffices(tenant, settings);
+  const { site, verify } = chooseOffice(offices, location);
+  const gps = verify ? evaluateCheckInLocation({ site: site!, location, maxAccuracyM: settings.gpsMaxAccuracyMeters, now }) : null;
+
+  if (gps?.rejected) {
+    if (gps.code === "LOCATION_REQUIRED") {
+      throw new ApiError(422, "LOCATION_REQUIRED", "Your location is needed to check in here.");
+    }
+    if (gps.code === "OUTSIDE_SITE_RADIUS") {
+      const { distanceM, radiusM, siteName } = gps;
+      throw new ApiError(422, "OUTSIDE_SITE_RADIUS", `You are ${distanceM} m from ${siteName}.`, { distanceM, radiusM, siteName });
+    }
+    // Only mock detection is audited: a deliberate act HR may want to see repeated.
+    // The other two are normal "try again" events, and auditing them would store a
+    // trail of where someone was. Hence no coordinates here either.
+    await writeAudit(tenant, {
+      companyId,
+      actorUserId: userId,
+      action: "ATTENDANCE_CHECKIN_REJECTED",
+      entityType: "Site",
+      entityId: site!.id,
+      metadata: { reason: gps.code, siteId: site!.id },
+    });
+    throw new ApiError(422, "MOCK_LOCATION_DETECTED", "This phone is reporting a mock location.");
+  }
+
+  const reading = gps?.reading;
+  const flags: AttendanceFlag[] = [
+    ...getCheckInFlags(schedule),
+    ...(offices.length === 0 ? (["NO_OFFICE_SITE"] as const) : []),
+    ...(gps?.flags ?? []),
+  ];
 
   const { status, lateMinutes } = computeAttendanceStatus({ checkInAt: now, checkOutAt: null, autoClosedAt: null }, schedule);
   try {
@@ -230,7 +344,11 @@ export async function checkIn(params: {
         scheduledStartAt: schedule.scheduledStartAt,
         scheduledEndAt: schedule.scheduledEndAt,
         checkInAt: now,
-        flags: getCheckInFlags(schedule),
+        checkInSiteId: site?.id ?? null,
+        // Only what passed through the GPS rules. A location sent for an office that
+        // doesn't require GPS stops here (Q6), and never reaches a column.
+        ...(reading ? checkInColumns(reading) : {}),
+        flags,
         source: "MOBILE",
         checkInClientRequestId: clientRequestId,
       },
@@ -248,12 +366,16 @@ export async function checkIn(params: {
   }
 }
 
-export async function checkOut(params: { companyId: string; employeeId: string }): Promise<AttendanceRecordWithCoordinatesDto> {
-  const { companyId, employeeId } = params;
+export async function checkOut(params: {
+  companyId: string;
+  employeeId: string;
+  location: LocationDto | null;
+}): Promise<AttendanceRecordWithCoordinatesDto> {
+  const { companyId, employeeId, location } = params;
   const tenant = getTenantPrisma(companyId);
   const now = new Date();
 
-  const { workDate, record, latestCheckIn, nextAction } = await getCurrentDay({ tenant, companyId, employeeId, now });
+  const { settings, workDate, record, latestCheckIn, nextAction } = await getCurrentDay({ tenant, companyId, employeeId, now });
 
   if (nextAction === "DONE") throw alreadyCheckedOut();
   if (nextAction !== "CHECK_OUT") {
@@ -274,11 +396,22 @@ export async function checkOut(params: { companyId: string; employeeId: string }
   const checkOutAt = now > checkInAt ? now : new Date(checkInAt.getTime() + 1);
   const outcome = computeCheckOut({ checkInAt, checkOutAt, scheduledEndAt: open.scheduledEndAt, flags: open.flags });
 
+  const site = await getCheckOutSite(tenant, settings, open);
+  const gps = site?.gpsRequired
+    ? evaluateCheckOutLocation({ site, location, maxAccuracyM: settings.gpsMaxAccuracyMeters, now })
+    : null;
+
   // Conditional, so two simultaneous check-outs can't both write. A check-out
   // doesn't change the status: its inputs are the check-in and the schedule (§1.4).
   const { count } = await tenant.attendanceRecord.updateMany({
     where: { companyId, id: open.id, checkOutAt: null, autoClosedAt: null },
-    data: { checkOutAt, ...outcome },
+    data: {
+      checkOutAt,
+      ...outcome,
+      // Check-in may already have set the same flag, such as a low accuracy.
+      flags: [...new Set([...outcome.flags, ...(gps?.flags ?? [])])],
+      ...(gps?.reading ? checkOutColumns(gps.reading) : {}),
+    },
   });
   if (count === 0) throw alreadyCheckedOut();
 

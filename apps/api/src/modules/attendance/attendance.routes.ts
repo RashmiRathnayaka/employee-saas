@@ -53,7 +53,12 @@ attendanceRouter.post(
   asyncHandler(async (req, res) => {
     const own = ownEmployee(req);
     logClockSkew(req, req.body.clientTime);
-    const { record, created } = await checkIn({ ...own, clientRequestId: req.body.clientRequestId });
+    const { record, created } = await checkIn({
+      ...own,
+      userId: req.auth!.userId,
+      clientRequestId: req.body.clientRequestId,
+      location: req.body.location ?? null,
+    });
     res.status(created ? 201 : 200).json({ record });
   }),
 );
@@ -64,7 +69,7 @@ attendanceRouter.post(
   asyncHandler(async (req, res) => {
     const own = ownEmployee(req);
     logClockSkew(req, req.body.clientTime);
-    res.status(200).json({ record: await checkOut(own) });
+    res.status(200).json({ record: await checkOut({ ...own, location: req.body.location ?? null }) });
   }),
 );
 
