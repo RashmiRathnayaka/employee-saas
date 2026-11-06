@@ -78,11 +78,34 @@ function intInRange(min: number, max: number) {
   return z.number({ invalid_type_error: message, required_error: message }).int(message).min(min, message).max(max, message);
 }
 
+/** A site's GPS radius. The company default has the same range, so a default
+ * can never fail when it's copied onto a new site. */
+export const SITE_RADIUS_MIN_METERS = 25;
+export const SITE_RADIUS_MAX_METERS = 5000;
+
+const SHIFT_MIN_MINUTES = 60;
+const SHIFT_MAX_MINUTES = 16 * 60;
+
+export const SHIFT_LENGTH_MESSAGE = "A shift must be between 1 and 16 hours long";
+
+function minutesOfDay(time: string): number {
+  const [hours, minutes] = time.split(":");
+  return Number(hours) * 60 + Number(minutes);
+}
+
+/** Is the shift from `start` to `end` ("HH:mm") 1-16 hours long? An end at or
+ * before the start means the next day, as in `getShiftInstants`, so 09:00-09:00
+ * is 24 hours and 22:00-06:00 is 8. */
+export function isValidShiftLength(start: string, end: string): boolean {
+  const length = (minutesOfDay(end) - minutesOfDay(start) + 24 * 60 - 1) % (24 * 60) + 1;
+  return length >= SHIFT_MIN_MINUTES && length <= SHIFT_MAX_MINUTES;
+}
+
 export const UpdateCompanySettingsRequestSchema = z.object({
   leaveApprovalWorkflow: LeaveApprovalWorkflowSchema.optional(),
   sickLeaveProofDeadlineDays: z.number().int().min(0).optional(),
   gpsCheckinEnabledDefault: z.boolean().optional(),
-  gpsRadiusMeters: z.number().int().min(0).optional(),
+  gpsRadiusMeters: intInRange(SITE_RADIUS_MIN_METERS, SITE_RADIUS_MAX_METERS).optional(),
   employeeIdPrefix: z.string().trim().min(1).max(20).optional(),
   // Strict: an unknown key is a typo, not a new module. Merged into the
   // stored value, so a key that isn't sent is left as it is.
@@ -106,6 +129,16 @@ export const UpdateCompanySettingsRequestSchema = z.object({
   dailyReminderTime: TimeOfDaySchema.optional(),
   gpsMaxAccuracyMeters: intInRange(10, 1000).optional(),
   gpsRetentionDays: intInRange(30, 365).optional(),
+}).superRefine((settings, ctx) => {
+  // When only one of the two is sent, the API checks it against the stored
+  // other one. This still runs when another field already failed, so it has
+  // to tolerate a malformed time: that field has its own error.
+  const { workStartTime: start, workEndTime: end } = settings;
+  if (!start || !end) return;
+  if (!TimeOfDaySchema.safeParse(start).success || !TimeOfDaySchema.safeParse(end).success) return;
+  if (!isValidShiftLength(start, end)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["workEndTime"], message: SHIFT_LENGTH_MESSAGE });
+  }
 });
 export type UpdateCompanySettingsRequest = z.infer<typeof UpdateCompanySettingsRequestSchema>;
 
