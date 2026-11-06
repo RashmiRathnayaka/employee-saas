@@ -45,8 +45,9 @@ async function seedCompany(params: {
   code: string;
   employeeCodePrefix: string;
   passwordHash: string;
+  enabledModules: Record<string, boolean>;
 }) {
-  const { name, code, employeeCodePrefix, passwordHash } = params;
+  const { name, code, employeeCodePrefix, passwordHash, enabledModules } = params;
   // Seeded companies use the default timezone (Asia/Colombo), so "this year"
   // is Colombo's year - not UTC's, which lags by 5.5 hours on 1 Jan.
   const currentYear = currentYearInTimezone(DEFAULT_TIMEZONE);
@@ -59,8 +60,10 @@ async function seedCompany(params: {
 
   await prisma.companySettings.upsert({
     where: { companyId: company.id },
+    // Create only, like every upsert here: running the seed again must never
+    // overwrite what an admin has since chosen on the settings page.
     update: {},
-    create: { companyId: company.id },
+    create: { companyId: company.id, enabledModules },
   });
 
   const engineering = await findOrCreateDepartment(company.id, "Engineering");
@@ -220,8 +223,22 @@ async function main() {
   const passwordHash = await argon2.hash(SEED_PASSWORD);
 
   await seedSuperAdmin(passwordHash);
-  await seedCompany({ name: "Acme Corporation", code: "ACME", employeeCodePrefix: "ACM-EMP", passwordHash });
-  await seedCompany({ name: "Beta Industries", code: "BETA", employeeCodePrefix: "BETA-EMP", passwordHash });
+  // ACME has the Phase 2 modules on, for trying the features. BETA has them
+  // off, for trying the MODULE_DISABLED path.
+  await seedCompany({
+    name: "Acme Corporation",
+    code: "ACME",
+    employeeCodePrefix: "ACM-EMP",
+    passwordHash,
+    enabledModules: { attendance: true, sites: true, tasks: true },
+  });
+  await seedCompany({
+    name: "Beta Industries",
+    code: "BETA",
+    employeeCodePrefix: "BETA-EMP",
+    passwordHash,
+    enabledModules: {},
+  });
 
   console.log("Seed complete. All seeded users share the password:", SEED_PASSWORD);
   console.log("Super admin login (no company code):", SUPER_ADMIN_EMAIL);

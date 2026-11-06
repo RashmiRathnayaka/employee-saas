@@ -47,6 +47,20 @@ model CompanySettings {
   employeeIdNextNumber       Int                   @default(1)
   enabledModules             Json                  @default("{}")
   workingDays                Json                  @default("{\"mon\":\"FULL\",\"tue\":\"FULL\",\"wed\":\"FULL\",\"thu\":\"FULL\",\"fri\":\"FULL\",\"sat\":\"HALF\",\"sun\":\"OFF\"}")
+  // Phase 2. Times are "HH:mm" wall-clock text in the company's timezone,
+  // and the ranges are CHECK constraints added by hand in the migration SQL:
+  // see docs/phase2/database-schema-phase2.md.
+  workStartTime              String                @default("09:00")
+  workEndTime                String                @default("17:00")
+  halfDayEndTime             String                @default("13:00")
+  lateGraceMinutes           Int                   @default(10)
+  autoCheckoutAfterMinutes   Int                   @default(240)
+  checkinReminderEnabled     Boolean               @default(true)
+  checkinReminderOffsetMinutes Int                 @default(0)
+  proofRemindersEnabled      Boolean               @default(true)
+  dailyReminderTime          String                @default("09:00")
+  gpsMaxAccuracyMeters       Int                   @default(100)
+  gpsRetentionDays           Int                   @default(90)
   updatedAt                  DateTime              @updatedAt
 
   @@map("company_settings")
@@ -298,6 +312,10 @@ model Notification {
   relatedEntityId   String?
   readAt            DateTime?
   createdAt         DateTime  @default(now())
+  // Lets a job write "at most one" notification. Uniqueness per company comes
+  // from a partial unique index added by hand in the migration SQL, since
+  // Prisma's schema DSL can't express one.
+  dedupeKey         String?
 
   @@index([companyId, userId, readAt])
   // GET /notifications: one user's rows, newest first.

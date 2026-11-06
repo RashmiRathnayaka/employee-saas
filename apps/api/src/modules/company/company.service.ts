@@ -1,3 +1,5 @@
+import type { UpdateCompanySettingsRequest } from "@employee-saas/shared";
+import { invalidateEnabledModulesCache } from "../../lib/enabledModules.js";
 import { ApiError } from "../../lib/errors.js";
 import { platformPrisma } from "../../lib/prisma.js";
 import { getTenantPrisma } from "../../lib/tenantPrisma.js";
@@ -39,24 +41,49 @@ export async function getOwnSettings(companyId: string) {
   return settings;
 }
 
+/** The before and after values of only the fields that actually changed. The
+ * settings form sends every field, so logging the whole body would hide what
+ * changed. Values are compared as JSON because two of the fields are objects. */
+function diffFields(before: Record<string, unknown>, after: Record<string, unknown>, fields: string[]) {
+  const changed = fields.filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
+  return {
+    before: Object.fromEntries(changed.map((field) => [field, before[field]])),
+    after: Object.fromEntries(changed.map((field) => [field, after[field]])),
+  };
+}
+
 export async function updateOwnSettings(params: {
   companyId: string;
   actorUserId: string;
-  data: Record<string, unknown>;
+  data: UpdateCompanySettingsRequest;
 }) {
   const tenant = getTenantPrisma(params.companyId);
-  return tenant.$transaction(async (tx) => {
-    const updated = await tx.companySettings.update({ where: { companyId: params.companyId }, data: params.data });
+  const updated = await tenant.$transaction(async (tx) => {
+    const existing = await tx.companySettings.findUnique({ where: { companyId: params.companyId } });
+    if (!existing) {
+      throw new ApiError(404, "NOT_FOUND", "Company settings not found.");
+    }
+
+    const data: Record<string, unknown> = { ...params.data };
+    if (params.data.enabledModules) {
+      // Merge, so turning one module on can't turn the others off.
+      data.enabledModules = { ...(existing.enabledModules as Record<string, unknown>), ...params.data.enabledModules };
+    }
+
+    const saved = await tx.companySettings.update({ where: { companyId: params.companyId }, data });
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,
       action: "COMPANY_SETTINGS_UPDATED",
       entityType: "CompanySettings",
       entityId: params.companyId,
-      metadata: params.data,
+      metadata: diffFields(existing, saved, Object.keys(data)),
     });
-    return updated;
+    return saved;
   });
+
+  invalidateEnabledModulesCache(params.companyId);
+  return updated;
 }
 
 export async function listHolidays(companyId: string) {
