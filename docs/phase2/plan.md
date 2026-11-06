@@ -1,9 +1,9 @@
 # Phase 2 plan — Attendance & Site Management
 
 **Status: approved. All open questions were resolved by the developer on
-2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 and 2.2 are
-implemented (`docs/reports/step-2.1.md`, `step-2.2.md`). Step 2.3 starts when
-the developer says so.
+2026-11-03 (see "Resolved questions" at the end).** Steps 2.1, 2.2 and 2.3 are
+implemented (`docs/reports/step-2.1.md`, `step-2.2.md`, `step-2.3.md`). Step 2.4
+starts when the developer says so.
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -134,7 +134,9 @@ and the riskiest unknowns come early:
 - **Profile → Location & privacy** screen.
 - Server GPS rules (architecture §3.2): reject vs flag, and the audit row on
   a mock rejection.
-- Nearest-office selection.
+- Nearest-office selection, which fills `checkInSiteId`, the `NO_OFFICE_SITE`
+  flag, and `gpsRequired` + office site in `/attendance/me/today` (left out of 2.3,
+  which has no GPS).
 - Unit tests for every row of the §3.2 table.
 - An Android manifest check: `npx expo export` or `npx expo config --type
   introspect` shows no `ACCESS_BACKGROUND_LOCATION`.
@@ -223,6 +225,12 @@ and the riskiest unknowns come early:
   on-leave / holiday rows.
 - Cross-module hooks: leave approve/revoke/cancel and holiday add/delete
   flip past rows.
+- Deactivating an employee closes their open record as `INCOMPLETE` +
+  `AUTO_CLOSED` (architecture §1.5). It uses the same closing code, so it waits for
+  this step rather than 2.3.
+- Auto-close must also cover a check-in with no schedule (a holiday or weekly off),
+  whose `scheduledEndAt` is NULL: its close time is check-in + 16 hours
+  (architecture §1.3). The partial index on `scheduledEndAt` alone won't find it.
 - `/health` worker status.
 - Fake-clock tests for Colombo and a night shift, and a two-workers test.
 
@@ -362,6 +370,8 @@ Small improvements that aren't part of any step yet. Pick them up when a step
 touches the same screen, or schedule them on their own.
 - **Inline image preview of proof documents:** HR sees the proof image on the
   leave request detail page, without having to open it separately.
+- **Paste coordinates into one box:** paste "lat, lng" from Google Maps into one
+  box on the site form, and it fills both the latitude and longitude fields.
 
 ---
 

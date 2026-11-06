@@ -4,8 +4,9 @@
 `plan.md`).** Migrated so far (step 2.1, `20261106090000_phase2_foundations`):
 the new `company_settings` columns and `notifications.dedupeKey`. Step 2.2,
 `20261106120000_phase2_sites`: the `sites` table and the
-`company_settings.gpsRadiusMeters` CHECK. The other new tables aren't migrated
-yet.
+`company_settings.gpsRadiusMeters` CHECK. Step 2.3,
+`20261106150000_phase2_attendance`: the `attendance_records` table. The other new
+tables aren't migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -355,6 +356,7 @@ architecture §1 for why there's a single check-in/check-out pair per day.
   - `CHECK (workedMinutes IS NULL OR workedMinutes >= 0)`
 - `flags` is a Postgres `text[]` holding values from a shared enum:
   - `LOW_ACCURACY`, `OUTSIDE_RADIUS_AT_CHECKOUT`, `MOCK_LOCATION_AT_CHECKOUT`
+  - `LOCATION_UNAVAILABLE_AT_CHECKOUT`, `STALE_LOCATION` (architecture §3.2)
   - `NO_OFFICE_SITE`
   - `NON_WORKING_DAY` (checked in on a holiday or weekly off day)
   - `ON_APPROVED_LEAVE` (checked in on a day with approved leave)
@@ -374,6 +376,12 @@ architecture §1 for why there's a single check-in/check-out pair per day.
 - `checkInClientRequestId`: if the phone retries a check-in whose response
   got lost, the server finds the existing row by this id and returns it
   with 200 instead of a 409.
+  - `UNIQUE (companyId, employeeId, checkInClientRequestId)`. It's per employee, so
+    one employee's id can never find or block another's row. Postgres treats NULLs
+    as distinct, so rows without an id don't collide.
+- `checkInSiteId` uses `ON DELETE RESTRICT`, so a site that attendance references
+  can't be deleted (`409 SITE_IN_USE`). Prisma would default an optional relation
+  to `SET NULL`, so `schema.prisma` states it explicitly.
 
 ### `site_visits`
 - At most one open visit per employee: partial unique index `UNIQUE

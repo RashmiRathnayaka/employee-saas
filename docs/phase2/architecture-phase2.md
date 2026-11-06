@@ -2,8 +2,8 @@
 
 **Status: design approved. The open questions were resolved by the
 developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
-Implemented so far: step 2.1 (module gating, settings, shared helpers) and
-step 2.2 (sites).
+Implemented so far: step 2.1 (module gating, settings, shared helpers), step
+2.2 (sites) and step 2.3 (office attendance, without GPS).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -118,9 +118,52 @@ The rule:
 
 The server always decides this. The client never sends `workDate`.
 
+**This rule answers "which shift is a *check-in* for?", not "which record do I
+check out of?"** Someone on 22:00–06:00 who checks out at 06:30 gets today's date
+from it, and today has no record. So the server first looks for a current record
+(added in step 2.3):
+1. **The employee's latest record with a check-in, if its close time hasn't
+   passed.** Check-out closes this one, whatever the date is now. The same goes
+   for a day-shift worker staying past midnight.
+2. Otherwise, the record for the §1.3 work date, if there is one.
+
+**Close time** is when a record stops accepting a check-out:
+- `scheduledEndAt + autoCheckoutAfterMinutes`, the same moment the day close job
+  uses (§5.4).
+- A check-in on a non-working day has no schedule, so its close time is **16 hours
+  after the check-in**, the longest shift the system allows.
+
+Until step 2.7's job exists, nothing writes `autoClosedAt`. The rule doesn't depend
+on the job having run: a record past its close time counts as closed either way.
+
+**What the app is told to do** (`nextAction`), which also decides the check-in and
+check-out errors:
+
+| Current record | `nextAction` | Check-in answers | Check-out answers |
+|---|---|---|---|
+| None, and today's close time hasn't passed | `CHECK_IN` | creates the record | `NOT_CHECKED_IN` (see below) |
+| None, and today's close time has passed | `DAY_CLOSED` | `DAY_ALREADY_CLOSED` | `NOT_CHECKED_IN` |
+| Written by day close, with no check-in (`ABSENT`, `ON_LEAVE`, `HOLIDAY`) | `DAY_CLOSED` | `DAY_ALREADY_CLOSED` | `NOT_CHECKED_IN` |
+| Checked in, still open | `CHECK_OUT` | `ALREADY_CHECKED_IN` | closes it |
+| Checked in, past its close time or auto-closed | `DAY_CLOSED` | `DAY_ALREADY_CLOSED` | `DAY_ALREADY_CLOSED` |
+| Checked out | `DONE` | `ALREADY_CHECKED_OUT` | `ALREADY_CHECKED_OUT` |
+
+- **A check-in after the day's close time is refused** (decided in step 2.3; the
+  developer is asked to confirm in the step report). From step 2.7, day close has
+  already written an `ABSENT` row by then, and a check-in that closes at once would
+  be useless. HR can correct the day. A day-shift worker's next chance is after
+  midnight, when the work date moves on.
+- **Check-out with no current record** normally answers `NOT_CHECKED_IN`. If the
+  latest check-in is still open or auto-closed, and is from this work date or the
+  day before, it answers `DAY_ALREADY_CLOSED`. That's a night worker tapping check-out
+  after their close time, who needs to hear "ask HR", not "you never checked in".
+
 ### 1.4 Status
-Status is recomputed by one pure function, `computeAttendanceStatus(record,
-schedule)`, whenever a record is created, checked out, corrected or closed.
+Status is computed by one pure function, `computeAttendanceStatus(record,
+schedule)`, whenever a record is created, corrected or closed. A check-out changes
+neither of its inputs, so it keeps the status and `lateMinutes` it has. Recomputing
+there would also judge the check-in against a grace period someone may have changed
+since.
 
 | Situation | `status` | Notes |
 |---|---|---|
@@ -138,7 +181,11 @@ schedule)`, whenever a record is created, checked out, corrected or closed.
 - **`workedMinutes`** = `checkOut − checkIn` in whole minutes. There's no
   break deduction and no overtime in Phase 2.
 - **`earlyLeaveMinutes`** = `scheduledEnd − checkOut` if positive. It's
-  recorded and shown in reports, but it isn't a status.
+  recorded and shown in reports, but it isn't a status. It stays 0 on a half-day
+  leave day, for the same reason as lateness (§1.5): we don't know which half was
+  taken.
+- **Whole minutes round down**, and the grace boundary is inclusive: with a 09:00
+  start and 10 minutes' grace, 09:10:00 is `PRESENT` and 09:10:01 is `LATE`.
 
 ### 1.5 Edge cases
 
@@ -150,9 +197,11 @@ schedule)`, whenever a record is created, checked out, corrected or closed.
 | **Check-in on a half-day leave day** | Allowed, `lateMinutes = 0`, flag `HALF_DAY_LEAVE`. | Phase 1 doesn't record *which* half was taken, so lateness can't be judged fairly (decided, Q8; recording morning/afternoon is a possible future leave change). |
 | **Double check-in** (double tap, two devices, retry) | The unique index on `(companyId, employeeId, workDate)` rejects the second insert → `409 ALREADY_CHECKED_IN`, with the existing record in `details`. If it carries the same `clientRequestId` as the first, it's a retry and gets `200` with the existing record. | Structural, so it holds even under true concurrency, and a lost response doesn't show the employee a scary error. |
 | **Check-in again after checking out the same day** | `409 ALREADY_CHECKED_OUT`. | One pair per day (§1.1). HR can correct the times. |
-| **Check-out without check-in** | `409 NOT_CHECKED_IN`. The app only shows "Check out" when today's record has a check-in, so this mostly guards against stale screens. | There's nothing to close, and inventing a check-in time would be fake data. |
-| **Check-out after the day was auto-closed** | `409 DAY_ALREADY_CLOSED`. The app says "Your day was closed automatically. Ask HR to correct it." | Accepting a check-out hours later would produce an unreal `workedMinutes`. HR corrections have a reason and an audit trail. |
-| **Shift longer than 16 h** (forgot to check out, came back next day) | Can't happen through check-out, since auto-close fires first. Through an HR correction it's allowed with flag `LONG_SHIFT`. | |
+| **Check-out without check-in** | `409 NOT_CHECKED_IN`. The app only shows "Check out" when the current record has a check-in (§1.3), so this mostly guards against stale screens. | There's nothing to close, and inventing a check-in time would be fake data. |
+| **Check-out late on a night shift** (22:00–06:00, out at 06:30) | Closes the night's record, found by the §1.3 current-record rule rather than by date. | The date has moved on, but it's still the same shift. |
+| **Check-out after the day was auto-closed**, or after its close time | `409 DAY_ALREADY_CLOSED`. The app says "Your day was closed automatically. Ask HR to correct it." | Accepting a check-out hours later would produce an unreal `workedMinutes`. HR corrections have a reason and an audit trail. |
+| **Forgot to check out yesterday, checking in today** | Allowed once yesterday's close time has passed. Today gets its own record; yesterday's stays open until day close (step 2.7) marks it `INCOMPLETE`. | Yesterday's mistake must not block today's attendance. |
+| **Shift longer than 16 h** | Flag `LONG_SHIFT`. Rare through check-out, because the close time normally comes first, but a long `autoCheckoutAfterMinutes` or a very early check-in can reach it. Through an HR correction it's allowed with the same flag. | It's real data, so it's recorded and made visible rather than rejected. |
 | **Phone offline** | **Phase 2 is online-only** (decided, Q4). The check-in button sends immediately; with no connection the app shows **"No internet connection, try again"** and keeps nothing queued. The same applies to check-out and site check-in/out. The server's clock is the only source of `checkInAt`. The request may include `clientTime`, which is logged for diagnosis and never trusted. | A queued offline check-in carries a phone-reported time, and the phone's clock is user-editable, so it can't be trusted for pay-relevant data. **Possible future requirement:** offline check-in for sites with no signal. It would need signed timestamps, a sync queue and conflict rules, so it would be its own step. |
 | **Flaky network (request sent, response lost)** | The app keeps the `clientRequestId` for that tap and resends it on retry. The server returns the same record. | Safe retry without double records. |
 | **Employee deactivated mid-shift** | Open record → closed by the deactivation transaction as `INCOMPLETE` with `AUTO_CLOSED`. | The same transaction already cancels pending leave in Phase 1. |

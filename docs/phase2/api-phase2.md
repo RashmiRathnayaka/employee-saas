@@ -46,13 +46,13 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| GET | `/attendance/me/today` | any employee | Home card state: the current work date, the effective schedule, today's record (or null), the open site visit (or null), `gpsRequired` + office site (name, radius) for the nearest office, and `nextAction` (`CHECK_IN` / `CHECK_OUT` / `DONE` / `DAY_CLOSED`) |
-| POST | `/attendance/check-in` | any employee | Body `{ clientRequestId: uuid, location?: { latitude, longitude, accuracy, mocked, capturedAt }, clientTime? }`. The server picks the work date, runs the GPS rules (architecture §3.2) and computes the status. **201** with the record; **200** with the existing record if it's a retry with the same `clientRequestId`. **409** `ALREADY_CHECKED_IN` / `ALREADY_CHECKED_OUT`; **422** `LOCATION_REQUIRED` / `OUTSIDE_SITE_RADIUS` / `MOCK_LOCATION_DETECTED`. |
-| POST | `/attendance/check-out` | any employee | Body `{ location?, clientTime? }`. Closes today's record (and any open site visit, in the same transaction) and computes `workedMinutes` and `earlyLeaveMinutes`. **409** `NOT_CHECKED_IN` / `ALREADY_CHECKED_OUT` / `DAY_ALREADY_CLOSED`. GPS problems only add flags here and never reject (architecture §3.2). |
-| GET | `/attendance/me` | any employee | My records, with `from`/`to` (dates, max 93 days) and pagination. Includes my own coordinates. |
+| GET | `/attendance/me/today` | any employee | Home card state: the current work date, the effective schedule, the current record (or null; architecture §1.3), and `nextAction` (`CHECK_IN` / `CHECK_OUT` / `DONE` / `DAY_CLOSED`). From step 2.4, `gpsRequired` + office site (name, radius) for the nearest office. From step 2.5, the open site visit (or null). |
+| POST | `/attendance/check-in` | any employee | Body `{ clientRequestId: uuid, location?: { latitude, longitude, accuracy, mocked, capturedAt }, clientTime? }`. The server picks the work date and computes the status. **201** with the record; **200** with the existing record if it's a retry with the same `clientRequestId`. **409** `ALREADY_CHECKED_IN` (with the existing record in `details.record`) / `ALREADY_CHECKED_OUT` / `DAY_ALREADY_CLOSED`. From step 2.4 it runs the GPS rules (architecture §3.2): **422** `LOCATION_REQUIRED` / `OUTSIDE_SITE_RADIUS` / `MOCK_LOCATION_DETECTED`. Until then a sent `location` is discarded. |
+| POST | `/attendance/check-out` | any employee | Body `{ location?, clientTime? }`. Closes the current record (architecture §1.3), which may be from yesterday on a night shift, and computes `workedMinutes` and `earlyLeaveMinutes`. **409** `NOT_CHECKED_IN` / `ALREADY_CHECKED_OUT` / `DAY_ALREADY_CLOSED`. From step 2.4, GPS problems only add flags here and never reject (architecture §3.2). From step 2.5, it also closes any open site visit, in the same transaction. |
+| GET | `/attendance/me` | any employee | My records, newest first, with optional `from`/`to` (dates, max 93 days apart when both are sent) and pagination. Includes my own coordinates. |
 | GET | `/attendance/team` | MANAGER | Direct reports' records. Filters: `date` or `from`/`to`, `employeeId` (narrowed to the team), `status`. No raw coordinates. |
 | GET | `/attendance` | COMPANY_ADMIN, HR | All records. Filters: `date` or `from`/`to`, `employeeId`, `departmentId`, `status`, `flag`. No raw coordinates in the list. |
-| GET | `/attendance/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | One record with its site visits and correction history. Coordinates are included for the owner and HR/Company Admin only. |
+| GET | `/attendance/:id` | owner, their MANAGER, COMPANY_ADMIN, HR | One record. Coordinates are included for the owner and HR/Company Admin only. Its site visits and correction history are added when those tables arrive (steps 2.5 and 2.6). |
 | POST | `/attendance` | COMPANY_ADMIN, HR | Create a record for a day that has none: `{ employeeId, workDate, checkInAt, checkOutAt?, siteId?, reason }`. `409` if a row exists (correct it instead). **400** `CANNOT_CORRECT_OWN_ATTENDANCE` if it's the caller's own. Audited as `ATTENDANCE_CREATED_BY_HR`. |
 | PATCH | `/attendance/:id/correct` | COMPANY_ADMIN, HR | `{ checkInAt?, checkOutAt?, siteId?, reason }` (reason at least 5 chars). Recomputes the status, writes `attendance_corrections` + audit, and notifies the employee. A row that is `ABSENT` / `ON_LEAVE` / `HOLIDAY` can be given times, which turns it into `PRESENT` / `LATE`. Self-correction is blocked as above. |
 
@@ -152,7 +152,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | `NO_EMPLOYEE_PROFILE` | 403 | A self-service attendance/site endpoint was called by a user without an employee profile |
 | `ALREADY_CHECKED_IN` / `ALREADY_CHECKED_OUT` | 409 | One check-in/out pair per work date |
 | `NOT_CHECKED_IN` | 409 | Check-out with nothing to close |
-| `DAY_ALREADY_CLOSED` | 409 | Auto-closed; ask HR |
+| `DAY_ALREADY_CLOSED` | 409 | The day has closed (auto-closed, past its close time, or already written by day close); ask HR |
 | `VISIT_ALREADY_OPEN` / `VISIT_NOT_OPEN` | 409 | Site visit state |
 | `SITE_IN_USE` | 409 | Delete blocked; deactivate instead |
 | `SITE_NAME_TAKEN` | 409 | Another site in this company has that name, ignoring case (inactive ones count) |
