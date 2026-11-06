@@ -212,6 +212,8 @@ function AttendanceSettingsCard({ settings }: { settings: CompanySettingsDto }) 
       dailyReminderTime: settings.dailyReminderTime,
       gpsMaxAccuracyMeters: settings.gpsMaxAccuracyMeters,
       gpsRetentionDays: settings.gpsRetentionDays,
+      gpsRadiusMeters: settings.gpsRadiusMeters,
+      gpsCheckinEnabledDefault: settings.gpsCheckinEnabledDefault,
     },
   });
   const mutation = useSaveSettings(setError);
@@ -328,7 +330,27 @@ function AttendanceSettingsCard({ settings }: { settings: CompanySettingsDto }) 
                 <Input id="gpsRetentionDays" type="number" {...register("gpsRetentionDays", { valueAsNumber: true })} />
                 <FieldError message={errors.gpsRetentionDays?.message} />
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gpsRadiusMeters">{strings.settings.gpsRadiusMeters}</Label>
+                <Input id="gpsRadiusMeters" type="number" {...register("gpsRadiusMeters", { valueAsNumber: true })} />
+                <FieldError message={errors.gpsRadiusMeters?.message} />
+              </div>
             </div>
+            <div className="flex items-center gap-3">
+              <Controller
+                control={control}
+                name="gpsCheckinEnabledDefault"
+                render={({ field }) => (
+                  <Checkbox
+                    id="gpsCheckinEnabledDefault"
+                    checked={field.value === true}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                  />
+                )}
+              />
+              <Label htmlFor="gpsCheckinEnabledDefault">{strings.settings.gpsCheckinEnabledDefault}</Label>
+            </div>
+            <p className="text-xs text-slate-500">{strings.settings.gpsDefaultsHint}</p>
           </section>
 
           <Button type="submit" disabled={isSubmitting}>

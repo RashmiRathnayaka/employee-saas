@@ -3,7 +3,8 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { LogOut, User } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { useCompany } from "../lib/companyContext";
-import { NAV_ITEMS } from "../lib/navigation";
+import { visibleNavItems } from "../lib/navigation";
+import { useCompanySettings } from "../lib/queries";
 import { NotificationBell } from "../components/NotificationBell";
 import { cn } from "../lib/cn";
 import { strings } from "../strings";
@@ -11,10 +12,12 @@ import { strings } from "../strings";
 export function AppShell() {
   const { user, logout } = useAuth();
   const { company } = useCompany();
+  // SUPER_ADMIN has no company, so no settings.
+  const { data: settings } = useCompanySettings(!!user?.companyId);
 
   if (!user) return null;
 
-  const items = NAV_ITEMS.filter((item) => item.roles.includes(user.role));
+  const items = visibleNavItems(user.role, settings);
   const displayName = user.email ?? strings.appName;
   const companyName = company?.name ?? (user.role === "SUPER_ADMIN" ? "Platform" : strings.appName);
 

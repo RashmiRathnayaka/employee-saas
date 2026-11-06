@@ -1,6 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import type { DepartmentDto, DesignationDto, EmployeeDto } from "@employee-saas/shared";
+import type { CompanySettingsDto, DepartmentDto, DesignationDto, EmployeeDto } from "@employee-saas/shared";
 import { api } from "./apiClient";
+
+/** The same query key the Settings page saves to, so switching a module on
+ * updates the menu straight away. */
+export function useCompanySettings(enabled = true) {
+  return useQuery({
+    queryKey: ["company-settings"],
+    queryFn: () => api.get<{ settings: CompanySettingsDto }>("/company/settings"),
+    select: (res) => res.settings,
+    enabled,
+    staleTime: 60 * 1000,
+  });
+}
 
 export function useDepartments() {
   return useQuery({

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { CompanyDto, CompanySettingsDto } from "@employee-saas/shared";
+import { SHIFT_LENGTH_MESSAGE, type CompanyDto, type CompanySettingsDto } from "@employee-saas/shared";
 import { ToastProvider } from "../lib/toast";
 import { CompanySettingsPage } from "./CompanySettingsPage";
 import { strings } from "../strings";
@@ -140,8 +140,62 @@ describe("CompanySettingsPage", () => {
       dailyReminderTime: "09:00",
       gpsMaxAccuracyMeters: 100,
       gpsRetentionDays: 90,
+      gpsRadiusMeters: 200,
+      gpsCheckinEnabledDefault: false,
     });
     expect(await screen.findByText(strings.settings.saved)).toBeInTheDocument();
+  });
+
+  it("shows and saves the defaults for new sites", async () => {
+    stored = { ...defaults, gpsRadiusMeters: 350, gpsCheckinEnabledDefault: true };
+    renderPage();
+    const user = userEvent.setup();
+
+    const radius = await screen.findByLabelText(strings.settings.gpsRadiusMeters);
+    expect(radius).toHaveValue(350);
+    const gps = screen.getByRole("checkbox", { name: strings.settings.gpsCheckinEnabledDefault });
+    expect(gps).toBeChecked();
+
+    fireEvent.change(radius, { target: { value: "500" } });
+    await user.click(gps);
+    await user.click(await saveButton("attendance"));
+
+    await waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toMatchObject({ gpsRadiusMeters: 500, gpsCheckinEnabledDefault: false });
+  });
+
+  it("rejects a default radius a site couldn't use", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    fireEvent.change(await screen.findByLabelText(strings.settings.gpsRadiusMeters), { target: { value: "0" } });
+    await user.click(await saveButton("attendance"));
+
+    expect(await screen.findByText("Must be between 25 and 5000")).toBeInTheDocument();
+    expect(patches).toHaveLength(0);
+  });
+
+  it("rejects a shift outside 1-16 hours, next to the end time", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    fireEvent.change(await screen.findByLabelText(strings.settings.workEndTime), { target: { value: "09:00" } });
+    await user.click(await saveButton("attendance"));
+
+    expect(await screen.findByText(SHIFT_LENGTH_MESSAGE)).toBeInTheDocument();
+    expect(patches).toHaveLength(0);
+  });
+
+  it("accepts a night shift that crosses midnight", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    fireEvent.change(await screen.findByLabelText(strings.settings.workStartTime), { target: { value: "22:00" } });
+    fireEvent.change(screen.getByLabelText(strings.settings.workEndTime), { target: { value: "06:00" } });
+    await user.click(await saveButton("attendance"));
+
+    await waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toMatchObject({ workStartTime: "22:00", workEndTime: "06:00" });
   });
 
   it("shows an out-of-range error next to the field and doesn't send anything", async () => {

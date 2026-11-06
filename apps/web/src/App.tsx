@@ -23,6 +23,7 @@ import { TeamLeaveRequestsPage } from "./routes/TeamLeaveRequestsPage";
 import { MyLeavePage } from "./routes/MyLeavePage";
 import { LeaveRequestDetailPage } from "./routes/LeaveRequestDetailPage";
 import { CompanySettingsPage } from "./routes/CompanySettingsPage";
+import { SitesPage } from "./routes/SitesPage";
 import { CompaniesPage } from "./routes/CompaniesPage";
 import { NotAllowedPage } from "./routes/NotAllowedPage";
 import { NotFoundPage } from "./routes/NotFoundPage";
@@ -51,6 +52,7 @@ export function App() {
                       <Route path="/employees/new" element={<CreateEmployeePage />} />
                       <Route path="/departments" element={<DepartmentsPage />} />
                       <Route path="/designations" element={<DesignationsPage />} />
+                      <Route path="/sites" element={<SitesPage />} />
                       <Route path="/users" element={<UsersPage />} />
                       <Route path="/leave-requests" element={<HrLeaveRequestsPage />} />
                       <Route path="/leave-types" element={<LeaveTypesPage />} />
