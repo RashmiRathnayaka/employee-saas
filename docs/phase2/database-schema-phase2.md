@@ -6,8 +6,9 @@ the new `company_settings` columns and `notifications.dedupeKey`. Step 2.2,
 `20261106120000_phase2_sites`: the `sites` table and the
 `company_settings.gpsRadiusMeters` CHECK. Step 2.3,
 `20261106150000_phase2_attendance`: the `attendance_records` table. Step 2.4 needed
-no migration: it fills GPS columns that already exist. The other new tables aren't
-migrated yet.
+no migration: it fills GPS columns that already exist. Step 2.5,
+`20261106180000_phase2_site_visits`: the `site_visits` table. The other new tables
+aren't migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -157,7 +158,7 @@ erDiagram
         decimal checkOutLat "etc."
         string_array flags
         text note "nullable, max 500"
-        uuid clientRequestId "unique per company, retry de-dup"
+        uuid clientRequestId "unique per employee, retry de-dup"
         boolean isCorrected
         timestamptz createdAt
         timestamptz updatedAt
@@ -388,12 +389,24 @@ architecture §1 for why there's a single check-in/check-out pair per day.
 - At most one open visit per employee: partial unique index `UNIQUE
   (companyId, employeeId) WHERE status = 'OPEN'`. A second check-in while
   one is open returns `409 VISIT_ALREADY_OPEN` with the open visit.
-- `UNIQUE (companyId, clientRequestId)` for retry de-duplication.
+- `UNIQUE (companyId, employeeId, clientRequestId)` for retry de-duplication. It's per
+  employee, like `attendance_records.checkInClientRequestId`, so one employee's id can
+  never find or block another's row.
+- `attendanceRecordId` is NULL when the `attendance` module is off, or when the day
+  closed with no row to link (architecture §1.6).
+- `siteId` and `attendanceRecordId` use `ON DELETE RESTRICT`, stated in `schema.prisma`,
+  since Prisma would default an optional relation to `SET NULL`.
 - Indexes:
   - `(companyId, siteId, checkInAt)` for site history
   - `(companyId, employeeId, checkInAt)` for "my visits" and the team view
   - `(companyId, workDate)` for reports
-- Same check-out CHECKs and GPS column set as `attendance_records`.
+  - partial `(companyId, checkInAt) WHERE checkInLat IS NOT NULL`, for the GPS purge
+- Same check-out CHECK and GPS column set as `attendance_records`, plus
+  `CHECK (durationMinutes IS NULL OR durationMinutes >= 0)`,
+  `CHECK (status <> 'OPEN' OR checkOutAt IS NULL)` and
+  `CHECK (status <> 'CLOSED' OR checkOutAt IS NOT NULL)`.
+- `note` is limited to 500 characters per request by the API, not by a CHECK: a check-out
+  note is added to the check-in's, so the stored text can be longer.
 - `flags` holds the GPS flags from `attendance_records`, plus **`AFTER_HOURS`**:
   the visit started after that day's attendance record was closed
   (architecture §1.6). The record itself isn't changed.

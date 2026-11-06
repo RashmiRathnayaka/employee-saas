@@ -2,8 +2,8 @@
 
 **Status: approved. All open questions were resolved by the developer on
 2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 to 2.4 are
-implemented (`docs/reports/step-2.1.md` to `step-2.4.md`). Step 2.5 starts when the
-developer says so.
+implemented (`docs/reports/step-2.1.md` to `step-2.4.md`). Step 2.5 is implemented
+and awaiting its real-device checklist (`docs/reports/step-2.5.md`).
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -183,7 +183,8 @@ and the riskiest unknowns come early:
 - Phone (Alex): check in at the external site near home. On web the
   manager's bell gets "Alex checked in at …" within 60 s.
 - Check out → the duration appears on phone and web.
-- Try a second check-in while one is open → "Check out of X first".
+- Try a second check-in while one is open → "Check out of X first". Home hides the
+  button while a visit is open, so this needs the picker already open on a second phone.
 
 **Risks:**
 - The UX of "day check-in" vs "site check-in" on one Home screen. We'll do
@@ -231,6 +232,15 @@ and the riskiest unknowns come early:
 - Auto-close must also cover a check-in with no schedule (a holiday or weekly off),
   whose `scheduledEndAt` is NULL: its close time is check-in + 16 hours
   (architecture §1.3). The partial index on `scheduledEndAt` alone won't find it.
+- **Found in 2.5, two things about site visits:**
+  - Closing a day's record doesn't reach every open visit. A visit opened after the
+    day closed (`AFTER_HOURS`), or with attendance off, has no later day close to end
+    it, so open visits need their own rule. Suggested: check-in + 16 hours, like a
+    check-in with no schedule.
+  - A visit made after the close time, before day close has written the day's row, is
+    `AFTER_HOURS` with no `attendanceRecordId` (architecture §1.6). If day close then
+    writes `ABSENT` for that date, it must link those visits and change the flag to
+    `ON_ABSENT_DAY`, or HR's daily report won't show the contradiction.
 - `/health` worker status.
 - Fake-clock tests for Colombo and a night shift, and a two-workers test.
 

@@ -3,8 +3,8 @@
 **Status: design approved. The open questions were resolved by the
 developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
 Implemented so far: step 2.1 (module gating, settings, shared helpers), step
-2.2 (sites), step 2.3 (office attendance) and step 2.4 (GPS verification and the
-privacy disclosure).
+2.2 (sites), step 2.3 (office attendance), step 2.4 (GPS verification and the
+privacy disclosure) and step 2.5 (site visits).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -246,6 +246,15 @@ This section was decided in Q2.
     only shows it while the row is still `ABSENT`, so it disappears once HR
     corrects the row or approved leave flips it to `ON_LEAVE`.
   - It isn't a rejection, and the manager still gets `SITE_CHECKED_IN`.
+- **If the close time has passed and there's no row yet** (day close hasn't written
+  one, or until step 2.7, can't), the visit is recorded and flagged `AFTER_HOURS`, with
+  no `attendanceRecordId`, and no row is created (settled in step 2.5). An office
+  check-in at that moment would be refused (§1.3), so a visit can't start the day
+  either. Its `workDate` is still set, and step 2.7 links it if it writes `ABSENT`.
+- **With `attendance` off** (§0), a visit touches no attendance row and gets neither
+  flag. Its `workDate` is the company-local date.
+- The flags come from `nextAction`, the same answer the Home card and an office
+  check-in use (`getVisitDayEffect` in `siteVisits.rules.ts`), so they can't disagree.
 - The day is ended by the normal "Check out for the day" or by auto-close.
 - Checking out of a site **does not** end the attendance day, because
   another visit may follow.
@@ -254,6 +263,12 @@ This section was decided in Q2.
   of <site> first".
 - **Day check-out with an open site visit**: the visit is closed at the
   same instant, with the same location, in the same transaction.
+  - Each is judged by its own site: a location is kept for the record only if its
+    office requires GPS, and for the visit only if its site does (Q6). So
+    `/attendance/me/today`'s `gpsRequired` is true before a check-out if either does.
+  - It's closed even if the `sites` module has been switched off since, because
+    nothing else could close it then. No position is kept in that case.
+  - The app's "Are you sure?" says the visit closes too.
 - **Manager notification:** on site check-in, the employee's manager gets
   an in-app notification `SITE_CHECKED_IN` ("Alex checked in at Site X,
   10:42"), plus push from step 2.9. This is sent only if the manager has an
@@ -307,9 +322,10 @@ This section was decided in Q2.
   coordinates line).
 - **Which sites an employee can pick:** all active `EXTERNAL` sites in the
   company. `GET /sites` returns every active site, and the step 2.5 picker asks
-  for `?type=EXTERNAL`. Sites from the employee's open tasks are listed first
-  (added with tasks, in step 2.10). There are no per-employee site assignments
-  in Phase 2 (decided, Q5).
+  for `?type=EXTERNAL`. `POST /site-visits/check-in` enforces this too: an office
+  or an inactive site gets the same 404 as an unknown one. Sites from the
+  employee's open tasks are listed first (added with tasks, in step 2.10). There
+  are no per-employee site assignments in Phase 2 (decided, Q5).
 - **Office attendance and GPS:**
   - If the company has no active `OFFICE` site, office check-in has no GPS
     at all (flag `NO_OFFICE_SITE`).
@@ -388,6 +404,9 @@ These rules apply when the site has `gpsRequired = true`:
 | **Poor accuracy** (`accuracy > max`) | Depends on what the uncertainty circle says: **certainly inside** (`distance + accuracy <= radius`) → accepted, no flag; **certainly outside** (`distance − accuracy > radius`) → rejected `OUTSIDE_SITE_RADIUS`; **can't tell** (the circle overlaps the boundary) → **allowed, flagged `LOW_ACCURACY`**. | Allowed; flag `LOW_ACCURACY` if `accuracy > max` | Indoors, GPS accuracy is often 50–200 m. Rejecting every vague fix would lock real people out of their own office every day. When the circle overlaps the site, they may well be there, so we let them in and HR sees the flag. When even the best case is outside, it's an outside case. |
 | **Mock location** (`mocked = true`; expo-location sets this on Android when the fix comes from a mock provider) | **Rejected** `422 MOCK_LOCATION_DETECTED`. An `audit_logs` row `ATTENDANCE_CHECKIN_REJECTED` records `{ reason, siteId }` and **no coordinates**. | **Allowed, flagged** `MOCK_LOCATION_AT_CHECKOUT` | A mock location is deliberate. Flagging alone would make GPS-required trivially bypassable. The audit row lets HR see repeated attempts. At check-out the same "don't leave it open" reasoning applies, and the flag shows up in reports. |
 | **Stale fix** (`capturedAt` more than 2 min before server time) | Allowed, flagged `STALE_LOCATION` | Same | Phones can hand back a cached fix. We don't reject on this, because the phone's clock may also be wrong. |
+
+Site visits use this same table, with the chosen site in place of the office. A
+visit's mock rejection writes the same `ATTENDANCE_CHECKIN_REJECTED` audit row.
 
 Rejections at check-in for `OUTSIDE_SITE_RADIUS` and `LOCATION_REQUIRED`
 are **not** audited. They're normal "try again" events; auditing them would
