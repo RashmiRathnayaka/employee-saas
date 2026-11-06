@@ -1,5 +1,6 @@
 import { Redirect, Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useIsModuleEnabled } from "../../lib/attendance";
 import { useAuth } from "../../lib/authContext";
 import { usePrimaryColor } from "../../lib/theme";
 import { strings } from "../../strings";
@@ -18,6 +19,7 @@ function tabIcon(filled: IoniconName, outline: IoniconName) {
 export default function TabsLayout() {
   const { status, user } = useAuth();
   const primaryColor = usePrimaryColor();
+  const attendanceEnabled = useIsModuleEnabled("attendance");
 
   if (status === "unauthenticated") return <Redirect href="/login" />;
   if (user?.mustChangePassword) return <Redirect href="/change-password" />;
@@ -38,6 +40,15 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="leave"
         options={{ title: strings.tabs.leave, headerShown: false, tabBarIcon: tabIcon("calendar", "calendar-outline") }}
+      />
+      {/* href: null is how Expo Router hides a tab. */}
+      <Tabs.Screen
+        name="attendance"
+        options={{
+          title: strings.tabs.attendance,
+          href: attendanceEnabled ? undefined : null,
+          tabBarIcon: tabIcon("time", "time-outline"),
+        }}
       />
       <Tabs.Screen
         name="profile"

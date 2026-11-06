@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
 import { useFocusEffect } from "expo-router";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_TIMEZONE, formatDate, todayInTimezone } from "@employee-saas/shared";
+import { AttendanceCard } from "../../components/AttendanceCard";
 import { Screen } from "../../components/ui/Screen";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { ErrorView, LoadingView } from "../../components/ui/StateViews";
+import { useIsModuleEnabled } from "../../lib/attendance";
 import { useAuth } from "../../lib/authContext";
 import { useCompany } from "../../lib/theme";
 import { useEmployeeMe, useLeaveBalances, useLeaveRequests, useLeaveTypes } from "../../lib/queries";
@@ -21,13 +24,16 @@ export default function HomeScreen() {
   const requestsQuery = useLeaveRequests(1, 100);
   const unreadCountQuery = useUnreadNotificationCount();
   const { refetch: refetchUnreadCount } = unreadCountQuery;
+  const attendanceEnabled = useIsModuleEnabled("attendance");
+  const queryClient = useQueryClient();
 
   // Coming back to Home (e.g. from the notifications screen or another tab)
-  // refreshes the bell's badge.
+  // refreshes the bell's badge, and attendance: the day may have moved on.
   useFocusEffect(
     useCallback(() => {
       void refetchUnreadCount();
-    }, [refetchUnreadCount]),
+      void queryClient.invalidateQueries({ queryKey: ["attendance", "today"] });
+    }, [refetchUnreadCount, queryClient]),
   );
 
   const [refreshing, setRefreshing] = useState(false);
@@ -40,9 +46,11 @@ export default function HomeScreen() {
       leaveTypesQuery.refetch(),
       requestsQuery.refetch(),
       refetchUnreadCount(),
+      queryClient.invalidateQueries({ queryKey: ["attendance", "today"] }),
+      queryClient.invalidateQueries({ queryKey: ["company-settings"] }),
     ]);
     setRefreshing(false);
-  }, [employeeQuery, balancesQuery, leaveTypesQuery, requestsQuery]);
+  }, [employeeQuery, balancesQuery, leaveTypesQuery, requestsQuery, refetchUnreadCount, queryClient]);
 
   const pendingCount = useMemo(() => {
     const requests = requestsQuery.data?.data ?? [];
@@ -89,6 +97,8 @@ export default function HomeScreen() {
         <Text style={styles.greeting}>
           {strings.home.greeting}, {employee?.firstName}
         </Text>
+
+        {attendanceEnabled ? <AttendanceCard /> : null}
 
         <Card>
           <Text style={styles.cardTitle}>{strings.home.balancesTitle}</Text>
