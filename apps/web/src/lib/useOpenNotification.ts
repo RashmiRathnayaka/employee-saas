@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { getNotificationLeaveRequestId, type NotificationDto } from "@employee-saas/shared";
+import { getNotificationTarget, type NotificationDto } from "@employee-saas/shared";
 import { useMarkNotificationRead } from "./notifications";
 
 /** Opening a notification: mark it read (if it isn't already) and go to the
@@ -12,7 +12,7 @@ export function useOpenNotification() {
 
   return (notification: NotificationDto) => {
     if (notification.readAt === null) markRead.mutate(notification.id);
-    const leaveRequestId = getNotificationLeaveRequestId(notification);
-    if (leaveRequestId) navigate(`/leave-requests/${leaveRequestId}`);
+    const target = getNotificationTarget(notification);
+    if (target?.kind === "leaveRequest") navigate(`/leave-requests/${target.id}`);
   };
 }

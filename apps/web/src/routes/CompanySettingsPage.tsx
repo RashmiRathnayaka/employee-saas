@@ -1,29 +1,26 @@
-import { useForm } from "react-hook-form";
+import { Controller, useForm, type UseFormSetError } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  isModuleEnabled,
   UpdateCompanyProfileRequestSchema,
   UpdateCompanySettingsRequestSchema,
   type CompanyDto,
+  type CompanyModule,
+  type CompanySettingsDto,
   type UpdateCompanyProfileRequest,
   type UpdateCompanySettingsRequest,
 } from "@employee-saas/shared";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
 import { api } from "../lib/apiClient";
-import { getErrorMessage } from "../lib/errorMapping";
+import { applyApiErrorToForm, getErrorMessage } from "../lib/errorMapping";
 import { useToast } from "../lib/toast";
 import { strings } from "../strings";
-
-type CompanySettings = {
-  leaveApprovalWorkflow: "MANAGER_ONLY" | "MANAGER_THEN_HR";
-  sickLeaveProofDeadlineDays: number;
-  employeeIdPrefix: string;
-  workingDays: Record<string, "FULL" | "HALF" | "OFF">;
-};
 
 const WEEKDAYS: { key: string; label: string }[] = [
   { key: "mon", label: "Monday" },
@@ -42,7 +39,7 @@ export function CompanySettingsPage() {
   });
   const settingsQuery = useQuery({
     queryKey: ["company-settings"],
-    queryFn: () => api.get<{ settings: CompanySettings }>("/company/settings"),
+    queryFn: () => api.get<{ settings: CompanySettingsDto }>("/company/settings"),
   });
 
   if (companyQuery.isLoading || settingsQuery.isLoading) {
@@ -56,6 +53,8 @@ export function CompanySettingsPage() {
     <div className="space-y-6">
       <ProfileCard company={companyQuery.data.company} />
       <SettingsCard settings={settingsQuery.data.settings} />
+      <ModulesCard settings={settingsQuery.data.settings} />
+      <AttendanceSettingsCard settings={settingsQuery.data.settings} />
     </div>
   );
 }
@@ -105,7 +104,243 @@ function ProfileCard({ company }: { company: CompanyDto }) {
   );
 }
 
-function SettingsCard({ settings }: { settings: CompanySettings }) {
+/** The save behaviour shared by the Modules and Attendance cards. A server
+ * validation error goes next to its field; anything else becomes a toast. */
+function useSaveSettings(setError: UseFormSetError<UpdateCompanySettingsRequest>) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (values: UpdateCompanySettingsRequest) => api.patch("/company/settings", values),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["company-settings"] });
+      toast.success(strings.settings.saved);
+    },
+    onError: (error) => {
+      if (!applyApiErrorToForm(error, setError)) toast.error(getErrorMessage(error));
+    },
+  });
+}
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null;
+  return (
+    <p role="alert" className="text-xs text-red-600">
+      {message}
+    </p>
+  );
+}
+
+const MODULE_OPTIONS: { key: CompanyModule; label: string; hint: string }[] = [
+  { key: "attendance", label: strings.settings.moduleAttendance, hint: strings.settings.moduleAttendanceHint },
+  { key: "sites", label: strings.settings.moduleSites, hint: strings.settings.moduleSitesHint },
+  { key: "tasks", label: strings.settings.moduleTasks, hint: strings.settings.moduleTasksHint },
+];
+
+function ModulesCard({ settings }: { settings: CompanySettingsDto }) {
+  const {
+    control,
+    handleSubmit,
+    setError,
+    formState: { isSubmitting },
+  } = useForm<UpdateCompanySettingsRequest>({
+    resolver: zodResolver(UpdateCompanySettingsRequestSchema),
+    defaultValues: {
+      enabledModules: {
+        attendance: isModuleEnabled(settings, "attendance"),
+        sites: isModuleEnabled(settings, "sites"),
+        tasks: isModuleEnabled(settings, "tasks"),
+      },
+    },
+  });
+  const mutation = useSaveSettings(setError);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{strings.settings.modules}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form className="space-y-4" onSubmit={handleSubmit((values) => mutation.mutateAsync(values).catch(() => undefined))}>
+          <p className="text-xs text-slate-500">{strings.settings.modulesHint}</p>
+          {MODULE_OPTIONS.map((option) => (
+            <div key={option.key} className="flex items-start gap-3">
+              <Controller
+                control={control}
+                name={`enabledModules.${option.key}`}
+                render={({ field }) => (
+                  <Checkbox
+                    id={`module-${option.key}`}
+                    className="mt-0.5"
+                    checked={field.value === true}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                  />
+                )}
+              />
+              <div>
+                <Label htmlFor={`module-${option.key}`}>{option.label}</Label>
+                <p className="text-xs text-slate-500">{option.hint}</p>
+              </div>
+            </div>
+          ))}
+          <Button type="submit" disabled={isSubmitting}>
+            {strings.settings.save}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AttendanceSettingsCard({ settings }: { settings: CompanySettingsDto }) {
+  const {
+    control,
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<UpdateCompanySettingsRequest>({
+    resolver: zodResolver(UpdateCompanySettingsRequestSchema),
+    defaultValues: {
+      workStartTime: settings.workStartTime,
+      workEndTime: settings.workEndTime,
+      halfDayEndTime: settings.halfDayEndTime,
+      lateGraceMinutes: settings.lateGraceMinutes,
+      autoCheckoutAfterMinutes: settings.autoCheckoutAfterMinutes,
+      checkinReminderEnabled: settings.checkinReminderEnabled,
+      checkinReminderOffsetMinutes: settings.checkinReminderOffsetMinutes,
+      proofRemindersEnabled: settings.proofRemindersEnabled,
+      dailyReminderTime: settings.dailyReminderTime,
+      gpsMaxAccuracyMeters: settings.gpsMaxAccuracyMeters,
+      gpsRetentionDays: settings.gpsRetentionDays,
+    },
+  });
+  const mutation = useSaveSettings(setError);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{strings.settings.attendanceSettings}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form
+          noValidate
+          className="space-y-6"
+          onSubmit={handleSubmit((values) => mutation.mutateAsync(values).catch(() => undefined))}
+        >
+          <p className="text-xs text-slate-500">{strings.settings.attendanceSettingsHint}</p>
+
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">{strings.settings.workHours}</h3>
+              <p className="mt-1 text-xs text-slate-500">{strings.settings.workHoursHint}</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="workStartTime">{strings.settings.workStartTime}</Label>
+                <Input id="workStartTime" type="time" {...register("workStartTime")} />
+                <FieldError message={errors.workStartTime?.message} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="workEndTime">{strings.settings.workEndTime}</Label>
+                <Input id="workEndTime" type="time" {...register("workEndTime")} />
+                <FieldError message={errors.workEndTime?.message} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="halfDayEndTime">{strings.settings.halfDayEndTime}</Label>
+                <Input id="halfDayEndTime" type="time" {...register("halfDayEndTime")} />
+                <FieldError message={errors.halfDayEndTime?.message} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="lateGraceMinutes">{strings.settings.lateGraceMinutes}</Label>
+                <Input id="lateGraceMinutes" type="number" {...register("lateGraceMinutes", { valueAsNumber: true })} />
+                <FieldError message={errors.lateGraceMinutes?.message} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="autoCheckoutAfterMinutes">{strings.settings.autoCheckoutAfterMinutes}</Label>
+                <Input
+                  id="autoCheckoutAfterMinutes"
+                  type="number"
+                  {...register("autoCheckoutAfterMinutes", { valueAsNumber: true })}
+                />
+                <FieldError message={errors.autoCheckoutAfterMinutes?.message} />
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold text-slate-800">{strings.settings.reminders}</h3>
+            <div className="flex items-center gap-3">
+              <Controller
+                control={control}
+                name="checkinReminderEnabled"
+                render={({ field }) => (
+                  <Checkbox
+                    id="checkinReminderEnabled"
+                    checked={field.value === true}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                  />
+                )}
+              />
+              <Label htmlFor="checkinReminderEnabled">{strings.settings.checkinReminderEnabled}</Label>
+            </div>
+            <div className="flex items-center gap-3">
+              <Controller
+                control={control}
+                name="proofRemindersEnabled"
+                render={({ field }) => (
+                  <Checkbox
+                    id="proofRemindersEnabled"
+                    checked={field.value === true}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                  />
+                )}
+              />
+              <Label htmlFor="proofRemindersEnabled">{strings.settings.proofRemindersEnabled}</Label>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="checkinReminderOffsetMinutes">{strings.settings.checkinReminderOffsetMinutes}</Label>
+                <Input
+                  id="checkinReminderOffsetMinutes"
+                  type="number"
+                  {...register("checkinReminderOffsetMinutes", { valueAsNumber: true })}
+                />
+                <FieldError message={errors.checkinReminderOffsetMinutes?.message} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dailyReminderTime">{strings.settings.dailyReminderTime}</Label>
+                <Input id="dailyReminderTime" type="time" {...register("dailyReminderTime")} />
+                <FieldError message={errors.dailyReminderTime?.message} />
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold text-slate-800">{strings.settings.gpsSection}</h3>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="gpsMaxAccuracyMeters">{strings.settings.gpsMaxAccuracyMeters}</Label>
+                <Input id="gpsMaxAccuracyMeters" type="number" {...register("gpsMaxAccuracyMeters", { valueAsNumber: true })} />
+                <FieldError message={errors.gpsMaxAccuracyMeters?.message} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gpsRetentionDays">{strings.settings.gpsRetentionDays}</Label>
+                <Input id="gpsRetentionDays" type="number" {...register("gpsRetentionDays", { valueAsNumber: true })} />
+                <FieldError message={errors.gpsRetentionDays?.message} />
+              </div>
+            </div>
+          </section>
+
+          <Button type="submit" disabled={isSubmitting}>
+            {strings.settings.save}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SettingsCard({ settings }: { settings: CompanySettingsDto }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const {
