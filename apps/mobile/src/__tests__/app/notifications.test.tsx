@@ -170,6 +170,37 @@ describe("NotificationsScreen", () => {
     expect(callsTo("PATCH", "/api/v1/notifications/n1/read")).toBe(0);
   });
 
+  describe("where a tap goes", () => {
+    const { router } = jest.requireMock("expo-router") as { router: { push: jest.Mock } };
+
+    it("a corrected attendance record opens the Attendance tab", async () => {
+      notifications = [makeNotification({ type: "ATTENDANCE_CORRECTED", title: "Attendance corrected", relatedEntityType: "AttendanceRecord", relatedEntityId: "a1" })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("Attendance corrected"));
+
+      expect(router.push).toHaveBeenCalledWith("/attendance");
+    });
+
+    it("a corrected site visit opens My visits", async () => {
+      notifications = [makeNotification({ type: "ATTENDANCE_CORRECTED", title: "Site visit corrected", relatedEntityType: "SiteVisit", relatedEntityId: "v1" })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("Site visit corrected"));
+
+      expect(router.push).toHaveBeenCalledWith("/my-visits");
+    });
+
+    it("a manager's site check-in stays put: it's someone else's visit", async () => {
+      notifications = [makeNotification({ type: "SITE_CHECKED_IN", title: "Site check-in", relatedEntityType: "SiteVisit", relatedEntityId: "v1" })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("Site check-in"));
+
+      expect(router.push).not.toHaveBeenCalled();
+    });
+  });
+
   it('"Mark all as read" calls read-all', async () => {
     notifications = [makeNotification(), makeNotification({ id: "n2", relatedEntityId: "r2", title: "Second" })];
     unreadCount = 2;

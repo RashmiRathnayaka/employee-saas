@@ -102,6 +102,7 @@ export function AttendanceCard() {
             {strings.attendance.schedule}: {scheduleLine(today, timezone)}
           </Text>
           {record?.checkInAt ? <TimesRow record={record} timezone={timezone} /> : null}
+          {record?.isCorrected ? <Text style={styles.corrected}>{strings.attendance.corrected}</Text> : null}
           {today.gpsRequired ? (
             <Text style={styles.gpsHint}>
               {gpsHintSite ? strings.location.checkedAtSite(gpsHintSite) : strings.location.checkedAtOffice}
@@ -150,6 +151,7 @@ const styles = StyleSheet.create({
   times: { marginBottom: 12 },
   time: { fontSize: 15, color: "#111827", paddingVertical: 2 },
   muted: { fontSize: 14, color: "#6B7280" },
+  corrected: { fontSize: 13, color: "#B45309", marginBottom: 12 },
   error: { fontSize: 14, color: "#DC2626", marginTop: 12 },
   gpsHint: { fontSize: 13, color: "#6B7280", marginBottom: 12 },
   settings: { marginTop: 12 },

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FlatList, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import type { SiteSummaryDto } from "@employee-saas/shared";
 import { Button } from "../components/ui/Button";
@@ -12,7 +12,8 @@ import { usePickableSites, useSiteVisitActions } from "../lib/siteVisits";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 import { strings } from "../strings";
 
-/** Pick an external site to check in at. Tapping one checks in straight away. */
+/** Pick an external site to check in at. Tapping one asks first, because a check-in tells
+ * the manager, can record the location and can start the day, and only HR can undo it. */
 export default function SitePickerScreen() {
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search);
@@ -23,6 +24,17 @@ export default function SitePickerScreen() {
   );
   const busy = gate.preparing || checkIn.isPending;
   const list = sites.data?.pages.flatMap((page) => page.data) ?? [];
+
+  function confirmCheckIn(site: SiteSummaryDto) {
+    Alert.alert(
+      strings.siteVisits.confirmTitle(site.name),
+      site.gpsRequired ? strings.siteVisits.confirmMessageWithGps : strings.siteVisits.confirmMessage,
+      [
+        { text: strings.common.cancel, style: "cancel" },
+        { text: strings.siteVisits.confirmAction, onPress: () => void gate.start(site, site.gpsRequired) },
+      ],
+    );
+  }
 
   return (
     <Screen padded={false}>
@@ -65,7 +77,7 @@ export default function SitePickerScreen() {
               accessibilityLabel={item.name}
               accessibilityState={{ disabled: busy }}
               disabled={busy}
-              onPress={() => void gate.start(item, item.gpsRequired)}
+              onPress={() => confirmCheckIn(item)}
               style={({ pressed }) => [styles.row, pressed ? styles.rowPressed : null]}
             >
               <Text style={styles.name}>{item.name}</Text>

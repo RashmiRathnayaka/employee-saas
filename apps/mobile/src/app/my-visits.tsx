@@ -75,6 +75,7 @@ export default function MyVisitsScreen() {
               </View>
               <Text style={styles.detail}>{timesLine(item, timezone)}</Text>
               {note ? <Text style={styles.note}>{note}</Text> : null}
+              {item.isCorrected ? <Text style={styles.note}>{strings.siteVisits.corrected}</Text> : null}
             </Card>
           );
         }}

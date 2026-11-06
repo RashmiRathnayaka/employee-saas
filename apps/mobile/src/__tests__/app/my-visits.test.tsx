@@ -91,6 +91,13 @@ afterEach(() => {
 });
 
 describe("My visits", () => {
+  it("marks a visit HR has corrected", async () => {
+    onVisits = respondWith([visit({ isCorrected: true })]);
+    await renderScreen();
+
+    expect(await screen.findByText(strings.siteVisits.corrected)).toBeTruthy();
+  });
+
   it("a closed visit: the site, the date, company-time times and the duration", async () => {
     onVisits = respondWith([visit({})]);
     await renderScreen();

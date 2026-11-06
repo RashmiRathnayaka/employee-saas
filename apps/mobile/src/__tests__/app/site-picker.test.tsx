@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import * as ExpoLocation from "expo-location";
 import * as SecureStore from "expo-secure-store";
+import { Alert } from "react-native";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { router } from "expo-router";
@@ -89,9 +90,19 @@ function renderScreen() {
   );
 }
 
+type AlertButton = { text?: string; style?: string; onPress?: () => void };
+let alertSpy: jest.SpiedFunction<typeof Alert.alert>;
+let confirmAnswer: "confirm" | "cancel";
+
 const pick = async (name: string) => fireEvent.press(await screen.findByRole("button", { name }));
 
 beforeEach(async () => {
+  confirmAnswer = "confirm";
+  alertSpy = jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
+    const list = (buttons ?? []) as AlertButton[];
+    const button = confirmAnswer === "confirm" ? list.find((b) => b.style !== "cancel") : list.find((b) => b.style === "cancel");
+    button?.onPress?.();
+  });
   await SecureStore.deleteItemAsync("location.disclosureAcknowledged");
   sites = [WAREHOUSE, GPS_SITE];
   siteUrls = [];
@@ -143,13 +154,68 @@ describe("the site picker", () => {
     expect(await screen.findByText(strings.siteVisits.noMatches)).toBeTruthy();
   });
 
-  it("a tap checks in and goes back to Home", async () => {
+  it("a confirmed tap checks in and goes back to Home", async () => {
     await renderScreen();
 
     await pick("Warehouse");
 
     await waitFor(() => expect(router.back).toHaveBeenCalledTimes(1));
     expect(checkInBodies).toEqual([{ siteId: "s1", clientRequestId: expect.any(String) }]);
+  });
+
+  describe("asking first", () => {
+    it("names the site, and says the manager is told and the day may start", async () => {
+      await renderScreen();
+
+      await pick("Warehouse");
+
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      expect(alertSpy.mock.calls[0]![0]).toBe(strings.siteVisits.confirmTitle("Warehouse"));
+      expect(alertSpy.mock.calls[0]![0]).toBe("Check in at Warehouse?");
+      expect(alertSpy.mock.calls[0]![1]).toBe(strings.siteVisits.confirmMessage);
+    });
+
+    it("also says the location is recorded, at a site that requires GPS", async () => {
+      await renderScreen();
+
+      await pick("Harbour");
+
+      expect(alertSpy.mock.calls[0]![1]).toBe(strings.siteVisits.confirmMessageWithGps);
+    });
+
+    it("Cancel sends nothing, reads no location and stays on the picker", async () => {
+      confirmAnswer = "cancel";
+      await renderScreen();
+
+      await pick("Harbour");
+      await screen.findByText("Warehouse");
+
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      expect(checkInBodies).toHaveLength(0);
+      expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+      expect(Location.getForegroundPermissionsAsync).not.toHaveBeenCalled();
+      expect(router.back).not.toHaveBeenCalled();
+    });
+
+    it("nothing is sent before the answer", async () => {
+      alertSpy.mockImplementation(() => {});
+      await renderScreen();
+
+      await pick("Warehouse");
+
+      expect(checkInBodies).toHaveLength(0);
+      expect(router.back).not.toHaveBeenCalled();
+    });
+
+    it("the location disclosure comes after the answer, not before", async () => {
+      Location.getForegroundPermissionsAsync.mockResolvedValue({ status: "undetermined", canAskAgain: true });
+      alertSpy.mockImplementation(() => {});
+      await renderScreen();
+
+      await pick("Harbour");
+
+      expect(screen.queryByText(strings.location.disclosureTitle)).toBeNull();
+    });
   });
 
   it("a site that doesn't require GPS: the phone's location isn't read", async () => {

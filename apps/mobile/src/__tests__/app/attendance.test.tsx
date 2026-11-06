@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { render, screen, waitFor } from "@testing-library/react-native";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import AttendanceScreen from "../../app/(tabs)/attendance";
 import { getNextHistoryPage } from "../../lib/attendance";
@@ -47,6 +47,28 @@ function jsonResponse(body: unknown, status = 200): Response {
 let modules: Record<string, boolean>;
 let total: number;
 let historyPages: string[];
+let scheduleCalls: number;
+let scheduleResponse: () => Response;
+
+/** Fourteen days from 3 Nov, with a Sunday off, and a night shift on the 4th. */
+function makeSchedule(source: "COMPANY" | "OVERRIDE" = "COMPANY") {
+  const days = Array.from({ length: 14 }, (_, i) => {
+    const date = `2026-11-${String(3 + i).padStart(2, "0")}`;
+    return {
+      date,
+      dayType: "WORKING",
+      isHalfDayLeave: false,
+      scheduledStartAt: `${date}T03:30:00.000Z`,
+      scheduledEndAt: `${date}T11:30:00.000Z`,
+    };
+  });
+  days[1] = { ...days[1]!, scheduledStartAt: "2026-11-04T16:30:00.000Z", scheduledEndAt: "2026-11-05T00:30:00.000Z" };
+  days[5] = { ...days[5]!, dayType: "OFF", scheduledStartAt: null as never, scheduledEndAt: null as never };
+  return {
+    schedule: { source, startTime: "09:00", endTime: "17:00", halfDayEndTime: "13:00", lateGraceMinutes: 10, workingDays: {} },
+    days,
+  };
+}
 
 const fetchMock = jest.fn(async (url: string | URL) => {
   const parsed = new URL(url);
@@ -54,6 +76,10 @@ const fetchMock = jest.fn(async (url: string | URL) => {
   if (path === "/auth/me") return jsonResponse({ user: ME_USER });
   if (path === "/company") return jsonResponse({ company: COMPANY });
   if (path === "/company/settings") return jsonResponse({ settings: { enabledModules: modules } });
+  if (path === "/schedule/me") {
+    scheduleCalls += 1;
+    return scheduleResponse();
+  }
   if (path === "/attendance/me") {
     const page = Number(parsed.searchParams.get("page"));
     historyPages.push(String(page));
@@ -81,6 +107,8 @@ beforeEach(() => {
   modules = { attendance: true };
   total = 2;
   historyPages = [];
+  scheduleCalls = 0;
+  scheduleResponse = () => jsonResponse(makeSchedule());
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -113,6 +141,64 @@ describe("AttendanceScreen", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/company/settings"))).toBe(true));
     expect(historyPages).toHaveLength(0);
+    expect(scheduleCalls).toBe(0);
+  });
+
+  it("marks a day HR has corrected", async () => {
+    total = 2;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (new URL(url).pathname.endsWith("/attendance/me")) {
+        return jsonResponse({ data: [makeRecord(2, { isCorrected: true })], page: 1, pageSize: 20, total: 1 });
+      }
+      return original(url);
+    });
+    await renderScreen();
+
+    expect(await screen.findByText(strings.attendance.corrected)).toBeTruthy();
+    fetchMock.mockImplementation(original);
+  });
+
+  describe("My schedule", () => {
+    it("shows the next few days, with today named and a night shift explained", async () => {
+      await renderScreen();
+
+      expect(await screen.findByText(strings.schedule.title)).toBeTruthy();
+      expect(screen.getByText(strings.schedule.companyHours)).toBeTruthy();
+      expect(screen.getByText(strings.schedule.today)).toBeTruthy();
+      expect(screen.getAllByText("09:00 - 17:00").length).toBeGreaterThan(0);
+      expect(screen.getByText(`22:00 - 06:00 (${strings.schedule.nextDay})`)).toBeTruthy();
+      expect(screen.queryByText("08 Nov 2026")).toBeNull();
+    });
+
+    it("says when the hours are the employee's own", async () => {
+      scheduleResponse = () => jsonResponse(makeSchedule("OVERRIDE"));
+      await renderScreen();
+
+      expect(await screen.findByText(strings.schedule.ownHours)).toBeTruthy();
+    });
+
+    it("opens to all 14 days, and closes again", async () => {
+      await renderScreen();
+
+      await fireEvent.press(await screen.findByRole("button", { name: strings.schedule.showAll }));
+
+      expect(await screen.findByText("16 Nov 2026")).toBeTruthy();
+      expect(screen.getByText("08 Nov 2026")).toBeTruthy();
+      expect(screen.getByText(strings.schedule.dayOff)).toBeTruthy();
+
+      await fireEvent.press(screen.getByRole("button", { name: strings.schedule.showLess }));
+
+      expect(screen.queryByText("16 Nov 2026")).toBeNull();
+    });
+
+    it("a failed schedule says so, and the history still shows", async () => {
+      scheduleResponse = () => jsonResponse({ error: { code: "INTERNAL", message: "x" } }, 500);
+      await renderScreen();
+
+      expect(await screen.findByText(strings.schedule.loadError)).toBeTruthy();
+      expect(await screen.findByText("02 Oct 2026")).toBeTruthy();
+    });
   });
 });
 
