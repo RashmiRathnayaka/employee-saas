@@ -1,7 +1,9 @@
 # Database Schema — Phase 2 (Attendance & Site Management)
 
 **Status: design approved; open questions resolved 2026-11-03 (see
-`plan.md`).** Nothing here is migrated yet.
+`plan.md`).** Migrated so far (step 2.1, `20261106090000_phase2_foundations`):
+the new `company_settings` columns and `notifications.dedupeKey`. The new
+tables aren't migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -271,8 +273,8 @@ own values are.
 - A missing key means **off** (deny by default; decided, Q1). New
   companies get Phase 2 modules off.
 - The seed sets all three to `true` for ACME and leaves BETA without them
-  (off). The migration itself **doesn't** change any existing company's
-  `enabledModules` value.
+  (off), only when it first creates the settings row. The migration itself
+  **doesn't** change any existing company's `enabledModules` value.
 - Leave and notifications are Phase 1 core and are not gated.
 
 Times are stored as `HH:mm` text, not Postgres `time`. Prisma maps `time` to
@@ -371,6 +373,9 @@ architecture §1 for why there's a single check-in/check-out pair per day.
   - `(companyId, employeeId, checkInAt)` for "my visits" and the team view
   - `(companyId, workDate)` for reports
 - Same check-out CHECKs and GPS column set as `attendance_records`.
+- `flags` holds the GPS flags from `attendance_records`, plus **`AFTER_HOURS`**:
+  the visit started after that day's attendance record was closed
+  (architecture §1.6). The record itself isn't changed.
 - `durationMinutes = floor((checkOutAt - checkInAt) / 60s)`. It is computed
   by the server on check-out or correction, never sent by the client.
   `AUTO_CLOSED` visits have `checkOutAt` NULL and `durationMinutes` NULL

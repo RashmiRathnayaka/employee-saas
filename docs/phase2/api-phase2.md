@@ -31,7 +31,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | GET | `/company/settings` | any | Now also returns the work schedule defaults (`workStartTime`, `workEndTime`, `halfDayEndTime`, `lateGraceMinutes`, `autoCheckoutAfterMinutes`), reminder settings and GPS settings (`gpsMaxAccuracyMeters`, `gpsRetentionDays`). `enabledModules` now has `attendance`, `sites` and `tasks`. |
-| PATCH | `/company/settings` | COMPANY_ADMIN | Accepts the new fields (validated `HH:mm`, ranges as in the schema doc). Audited as `COMPANY_SETTINGS_UPDATED` with before/after, as in Phase 1. |
+| PATCH | `/company/settings` | COMPANY_ADMIN | Accepts the new fields (validated `HH:mm`, ranges as in the schema doc). `enabledModules` accepts only `attendance`, `sites` and `tasks`, and is merged into the stored value. Audited as `COMPANY_SETTINGS_UPDATED`, with the before and after values of the fields that changed. |
 
 ## Schedules (module `attendance`)
 
@@ -71,7 +71,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| POST | `/site-visits/check-in` | any employee | `{ siteId, clientRequestId, location?, note? }`. Uses the GPS rules with the site's settings. Starts the attendance day if there's no record for the work date. If the employee already checked in (office) or the day is closed, only the visit is recorded (architecture §1.6, Q2). Notifies the manager (`SITE_CHECKED_IN`). **201**, or **200** on a retry. **409** `VISIT_ALREADY_OPEN`; **404** for an inactive or unknown site; **422** for the GPS errors. |
+| POST | `/site-visits/check-in` | any employee | `{ siteId, clientRequestId, location?, note? }`. Uses the GPS rules with the site's settings. Starts the attendance day if there's no record for the work date. If the employee already checked in (office), only the visit is recorded. If the day is closed, only the visit is recorded and it's flagged `AFTER_HOURS` (architecture §1.6, Q2). Notifies the manager (`SITE_CHECKED_IN`). **201**, or **200** on a retry. **409** `VISIT_ALREADY_OPEN`; **404** for an inactive or unknown site; **422** for the GPS errors. |
 | POST | `/site-visits/:id/check-out` | visit owner | `{ location?, note? }` → computes `durationMinutes`. **409** `VISIT_NOT_OPEN`. |
 | GET | `/site-visits/me` | any employee | My visits (`from`/`to`, paginated) |
 | GET | `/site-visits/me/open` | any employee | My open visit or `null` (also included in `/attendance/me/today`) |
@@ -128,7 +128,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | GET | `/reports/attendance/daily/export` | same | Same filters → `text/csv` attachment `attendance-YYYY-MM-DD.csv`. Audited as `REPORT_EXPORTED`. |
 | GET | `/reports/attendance/monthly` | COMPANY_ADMIN, HR, MANAGER (team) | `?month=YYYY-MM`, `departmentId`. Per employee: `presentDays, lateDays, absentDays, onLeaveDays, holidayDays, incompleteDays, totalWorkedMinutes`. Paginated. |
 | GET | `/reports/attendance/monthly/export` | same | CSV `attendance-summary-YYYY-MM.csv`. Audited. |
-| GET | `/reports/site-visits` | COMPANY_ADMIN, HR, MANAGER (team) | `from`, `to` (max 93 days), `siteId`, `employeeId`. Paginated visit rows with duration and flags. |
+| GET | `/reports/site-visits` | COMPANY_ADMIN, HR, MANAGER (team) | `from`, `to` (max 93 days), `siteId`, `employeeId`, `flag`. Paginated visit rows with duration and flags (including `AFTER_HOURS`). |
 | GET | `/reports/site-visits/export` | same | CSV. Audited. |
 
 ## Dashboard (extended)

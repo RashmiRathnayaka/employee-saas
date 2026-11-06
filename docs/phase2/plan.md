@@ -1,8 +1,8 @@
 # Phase 2 plan — Attendance & Site Management
 
 **Status: approved. All open questions were resolved by the developer on
-2026-11-03 (see "Resolved questions" at the end).** Implementation starts
-at step 2.1, when the developer says so.
+2026-11-03 (see "Resolved questions" at the end).** Step 2.1 is implemented
+(`docs/reports/step-2.1.md`). Step 2.2 starts when the developer says so.
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -45,9 +45,9 @@ and the riskiest unknowns come early:
 - Pino redaction for location fields.
 - **Seed** (Q1): `seedCompany` sets `enabledModules` to `{ attendance:
   true, sites: true, tasks: true }` for ACME and leaves BETA at `{}` (all
-  off).
-  - Running the seed against the **dev** DB still needs your permission
-    (CLAUDE.md #10). Tests use their own fixtures.
+  off), when it first creates the settings row.
+  - **The dev DB is not reseeded** (your decision, 2026-11-06; it holds your
+    real-device test data). Tests use their own fixtures.
 
 **Try it:**
 - Web as Company Admin: toggle modules and change working hours, save,
@@ -60,8 +60,8 @@ and the riskiest unknowns come early:
 - Getting the timezone/DST helper right without a library. It's mitigated
   by table-driven tests, including a night shift and the London DST change.
 - Your current dev DB's ACME still has `enabledModules: {}`, so its
-  modules are off. Either switch them on in the new settings page (no
-  reseed needed), or let me reseed after you say yes.
+  modules are off until you switch them on in the new settings page (your
+  decision, 2026-11-06: no reseed).
 
 ## 2.2 Sites (API + web)
 **Scope**
@@ -154,6 +154,8 @@ and the riskiest unknowns come early:
 - `site_visits`.
 - Check-in/out with site GPS rules.
 - The first visit starts the attendance day (§1.6).
+- A visit after the day is closed doesn't reopen it and is flagged
+  `AFTER_HOURS`.
 - One open visit at a time.
 - Day check-out closes an open visit.
 - `SITE_CHECKED_IN` notification to the manager.
@@ -353,7 +355,7 @@ All 24 were resolved by the developer on 2026-11-03.
 | # | Topic | Decision | How |
 |---|---|---|---|
 | Q1 | Module default | A missing `enabledModules` key = **off**; new companies start with attendance/sites/tasks off. **Seed:** all three **on for ACME** (to test the features), **off for BETA** (to test `MODULE_DISABLED`). | Your answer |
-| Q2 | Site visit starts the day | **Yes.** A site check-in starts the attendance day if there's no record for that work date. If the employee already checked in at the office, **only the visit is recorded**. (A visit after the day was closed is also just recorded; it doesn't reopen the day. Architecture §1.6.) | Your answer |
+| Q2 | Site visit starts the day | **Yes.** A site check-in starts the attendance day if there's no record for that work date. If the employee already checked in at the office, **only the visit is recorded**. A visit after the day was closed is also just recorded, doesn't reopen the day, and is **flagged `AFTER_HOURS`** so it shows in HR reports (your answer, 2026-11-06). Architecture §1.6. | Your answer |
 | Q3 | Sessions per day | One check-in/out pair per work date. No lunch-break out/in. | Accepted |
 | Q4 | Offline | **No offline check-in in Phase 2**, because the device clock can be manipulated. The app shows **"No internet connection, try again"**. Offline check-in is noted as a **possible future requirement** (architecture §1.5). | Your answer |
 | Q5 | Site assignment | Any employee can pick any active external site. No per-employee assignments. | Accepted |

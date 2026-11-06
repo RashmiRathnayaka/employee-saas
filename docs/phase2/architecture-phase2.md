@@ -1,8 +1,8 @@
 # Architecture — Phase 2 (Attendance & Site Management)
 
 **Status: design approved. The open questions were resolved by the
-developer on 2026-11-03 (see `plan.md` → "Resolved questions").** No code
-has been written yet; implementation starts at step 2.1.
+developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
+Implemented so far: step 2.1 (module gating, settings, shared helpers).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -21,6 +21,11 @@ A new middleware, `requireModule("attendance" | "sites" | "tasks")`, runs
 right after `requireAuth` on every Phase 2 router.
 - It reads `company_settings.enabledModules` for `req.auth.companyId`, with
   a short in-process cache (30 s) so it isn't a DB hit on every request.
+- `PATCH /company/settings` **merges** `enabledModules` into the stored
+  value, so sending `{ attendance: true }` leaves `sites` and `tasks` alone.
+  Only the three known keys are accepted. The saving instance drops its
+  cache entry after the commit, so the change applies there at once. Other
+  API instances see it within the 30 s cache lifetime.
 - Off → `403 { error: { code: "MODULE_DISABLED", message, details: { module } } }`.
 - **Default: off** (decided, Q1). A missing key in `enabledModules` means
   disabled, so new companies start with attendance, sites and tasks off
@@ -28,9 +33,11 @@ right after `requireAuth` on every Phase 2 router.
   - **Seed:** ACME gets `attendance`, `sites` and `tasks` **on**, for
     testing the features. BETA keeps them **off**, for testing the
     `MODULE_DISABLED` path.
-  - The seed only takes effect on the dev DB when it's re-seeded, which
-    needs your permission (CLAUDE.md #10). Until then you can switch the
-    modules on for ACME in the web settings page (step 2.1).
+  - The seed sets these only when it first creates a company's settings
+    row, like every other seed upsert. Running it on an existing DB never
+    overwrites what an admin chose. The dev DB already exists and is not
+    reseeded (decided by the developer, 2026-11-06), so ACME's modules
+    there are switched on from the web settings page (step 2.1).
 - The check runs before any resource lookup. A disabled module therefore
   answers 403 even for an id from another company. That leaks nothing,
   because it's about the caller's own company.
@@ -86,6 +93,13 @@ answers "what were they supposed to work?":
 `Intl.DateTimeFormat` (no new library) and is tested under
 `TZ=Asia/Colombo` and `TZ=UTC`, plus a DST zone (`Europe/London`) for the
 day the clocks change.
+
+Two wall-clock times need a rule on the days clocks change:
+- **A time that doesn't exist** (clocks jump 01:00 → 02:00, so 01:30 never
+  happens) moves forward by the size of the jump: 01:30 becomes 02:30 local.
+- **A time that happens twice** (clocks go back, so 01:30 happens twice)
+  means the **first** one. A shift can't start late because of a clock
+  change.
 
 ### 1.3 Which work date does a check-in belong to?
 - For a **day shift**, it's simply the local date of the check-in.
@@ -157,9 +171,17 @@ This section was decided in Q2.
 - **If the employee already checked in at the office** (a record with a
   check-in exists), the site check-in **only records the visit**. The
   attendance record isn't changed.
-- **If the day is already closed** (checked out or auto-closed), the visit
-  is still recorded, linked to that day's record, and doesn't reopen it.
-  It follows the same "only record the visit" rule.
+- **If the day is already closed**, the visit is still recorded and linked
+  to that day's record. It doesn't reopen or change the record. The visit
+  gets the flag **`AFTER_HOURS`**, so it stands out in HR reports (decided
+  by the developer, 2026-11-06).
+  - "Closed" means the record has a `checkOutAt` or an `autoClosedAt`.
+  - It also covers a record day close wrote with no check-in (`ABSENT`,
+    `ON_LEAVE`, `HOLIDAY`): day close has already run for that date. HR
+    can correct the record if the person really was working.
+  - The flag goes on the **visit** (`site_visits.flags`), not on the
+    attendance record.
+  - It isn't a rejection, and the manager still gets `SITE_CHECKED_IN`.
 - The day is ended by the normal "Check out for the day" or by auto-close.
 - Checking out of a site **does not** end the attendance day, because
   another visit may follow.
@@ -318,9 +340,11 @@ store a location trail of failed attempts. Only mock detection is.
   Phase 2 they're kept indefinitely.
 - **Rejected attempts:** they have no coordinates anywhere, and audit rows
   only hold the reason.
-- **Logs:** pino redaction gains `*.latitude`, `*.longitude`, `location`, so
-  coordinates never reach the logs. A test asserts this, like the Phase 1
-  logger test.
+- **Logs:** pino redaction gains `latitude`, `longitude`, `location` and the
+  `checkIn`/`checkOut` `Lat`/`Lng` column names, each at the top level and
+  one level down, plus `req.body.location`. A test asserts this, like the
+  Phase 1 logger test. Redaction is a safety net with a depth limit, so the
+  rule stays: don't log a location object at all.
 
 ---
 
@@ -644,8 +668,9 @@ deadline (decided, Q19).
   days, and total worked minutes.
   - Built by one `GROUP BY` over `attendance_records` for that month's
     date range.
-- **Site visit history:** filter by date range (max 93 days), site and
-  employee. It shows duration and flags.
+- **Site visit history:** filter by date range (max 93 days), site,
+  employee and flag. It shows duration and flags, including `AFTER_HOURS`
+  (§1.6), which also appears in the CSV.
 - **CSV export** for each of these:
   - UTF-8 with BOM, so Excel opens Sinhala/Tamil names correctly.
   - Times are in company local time, with the timezone in the header row.
