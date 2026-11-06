@@ -34,6 +34,7 @@ model Company {
   auditLogs             AuditLog[]
   sites                 Site[]
   attendanceRecords     AttendanceRecord[]
+  siteVisits            SiteVisit[]
 
   @@map("companies")
 }
@@ -125,6 +126,7 @@ model Employee {
   leaveBalances LeaveBalance[]
   leaveRequests LeaveRequest[] @relation("EmployeeLeaveRequests")
   attendanceRecords AttendanceRecord[]
+  siteVisits    SiteVisit[]
 
   @@unique([companyId, employeeCode])
   @@index([companyId])
@@ -345,6 +347,7 @@ model Site {
   updatedAt       DateTime  @updatedAt
 
   attendanceCheckIns AttendanceRecord[]
+  visits             SiteVisit[]
 
   // Case-insensitive name uniqueness and the CHECKs are added by hand in the
   // migration SQL: see docs/phase2/database-schema-phase2.md.
@@ -396,12 +399,68 @@ model AttendanceRecord {
   createdAt              DateTime         @default(now())
   updatedAt              DateTime         @updatedAt
 
+  siteVisits             SiteVisit[]
+
   // The first makes double check-in impossible. The partial indexes and CHECKs
   // are added by hand in the migration SQL.
   @@unique([companyId, employeeId, workDate])
   @@unique([companyId, employeeId, checkInClientRequestId])
   @@index([companyId, workDate, status])
   @@map("attendance_records")
+}
+
+// A check-in/out at a site: see docs/phase2/architecture-phase2.md §1.6.
+model SiteVisit {
+  id                   String           @id @default(uuid())
+  companyId            String
+  company              Company          @relation(fields: [companyId], references: [id])
+  employeeId           String
+  employee             Employee         @relation(fields: [employeeId], references: [id])
+  siteId               String
+  // ON DELETE RESTRICT, so a site in use can't be deleted (409 SITE_IN_USE).
+  site                 Site             @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  // NULL when the attendance module is off, or the day closed with no row to link.
+  attendanceRecordId   String?
+  attendanceRecord     AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  workDate             DateTime         @db.Date
+  status               SiteVisitStatus  @default(OPEN)
+  checkInAt            DateTime
+  checkOutAt           DateTime?
+  durationMinutes      Int?
+  checkInLat           Decimal?         @db.Decimal(9, 6)
+  checkInLng           Decimal?         @db.Decimal(9, 6)
+  checkInAccuracyM     Int?
+  checkInDistanceM     Int?
+  checkInWithinRadius  Boolean?
+  checkInMocked        Boolean?
+  checkOutLat          Decimal?         @db.Decimal(9, 6)
+  checkOutLng          Decimal?         @db.Decimal(9, 6)
+  checkOutAccuracyM    Int?
+  checkOutDistanceM    Int?
+  checkOutWithinRadius Boolean?
+  checkOutMocked       Boolean?
+  flags                String[]         @default([])
+  note                 String?
+  // Lets a retried check-in find the row its lost response created. Per employee,
+  // so one employee's id can never find or block another's row.
+  clientRequestId      String
+  isCorrected          Boolean          @default(false)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  // "At most one open visit" is a partial unique index, and the CHECKs are added by
+  // hand in the migration SQL.
+  @@unique([companyId, employeeId, clientRequestId])
+  @@index([companyId, siteId, checkInAt])
+  @@index([companyId, employeeId, checkInAt])
+  @@index([companyId, workDate])
+  @@map("site_visits")
+}
+
+enum SiteVisitStatus {
+  OPEN
+  CLOSED
+  AUTO_CLOSED
 }
 
 enum AttendanceStatus {

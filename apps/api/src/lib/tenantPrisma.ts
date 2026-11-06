@@ -21,6 +21,7 @@ const TENANT_MODELS = new Set([
   "AuditLog",
   "Site",
   "AttendanceRecord",
+  "SiteVisit",
 ]);
 
 const WHERE_OPERATIONS = new Set([

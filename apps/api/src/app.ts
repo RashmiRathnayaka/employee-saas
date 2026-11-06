@@ -21,6 +21,7 @@ import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 import { notificationsRouter } from "./modules/notifications/notifications.routes.js";
 import { sitesRouter } from "./modules/sites/sites.routes.js";
 import { attendanceRouter } from "./modules/attendance/attendance.routes.js";
+import { siteVisitsRouter } from "./modules/siteVisits/siteVisits.routes.js";
 
 export function createApp() {
   const app = express();
@@ -50,6 +51,7 @@ export function createApp() {
   app.use("/api/v1", notificationsRouter);
   app.use("/api/v1", sitesRouter);
   app.use("/api/v1", attendanceRouter);
+  app.use("/api/v1", siteVisitsRouter);
 
   app.use(errorHandler);
 

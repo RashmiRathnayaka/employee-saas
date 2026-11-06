@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { AttendanceListQuerySchema, CheckInRequestSchema, CheckOutRequestSchema } from "@employee-saas/shared";
 import { asyncHandler } from "../../lib/asyncHandler.js";
-import { ApiError } from "../../lib/errors.js";
+import { ownEmployee } from "../../lib/ownEmployee.js";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import { requireCompanyContext } from "../../middleware/requireCompanyContext.js";
 import { requireModule } from "../../middleware/requireModule.js";
@@ -11,14 +11,6 @@ import { checkIn, checkOut, getRecord, getToday, listMyRecords } from "./attenda
 export const attendanceRouter = Router();
 
 attendanceRouter.use("/attendance", requireAuth, requireCompanyContext, requireModule("attendance"));
-
-/** For the "self" endpoints: a Company Admin account may have no employee profile. */
-function ownEmployee(req: Request) {
-  if (!req.auth!.employeeId) {
-    throw new ApiError(403, "NO_EMPLOYEE_PROFILE", "This action needs an employee profile.");
-  }
-  return { companyId: req.auth!.companyId!, employeeId: req.auth!.employeeId };
-}
 
 const CLOCK_SKEW_WORTH_LOGGING_MS = 2 * 60_000;
 
@@ -77,12 +69,12 @@ attendanceRouter.post(
 attendanceRouter.get(
   "/attendance/:id",
   asyncHandler(async (req, res) => {
-    const record = await getRecord({
+    const result = await getRecord({
       companyId: req.auth!.companyId!,
       role: req.auth!.role,
       callerEmployeeId: req.auth!.employeeId,
       recordId: req.params.id!,
     });
-    res.status(200).json({ record });
+    res.status(200).json(result);
   }),
 );

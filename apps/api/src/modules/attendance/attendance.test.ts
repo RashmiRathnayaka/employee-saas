@@ -746,6 +746,7 @@ describe("attendance module", () => {
         record: null,
         nextAction: "CHECK_IN",
         gpsRequired: false,
+        openVisit: null,
         officeSite: null,
       });
     });

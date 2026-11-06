@@ -1,4 +1,4 @@
-import type { AttendanceRecord, CompanySettings, Site } from "@prisma/client";
+import type { AttendanceRecord, CompanySettings } from "@prisma/client";
 import {
   addDaysToIsoDate,
   getWorkDate,
@@ -15,14 +15,27 @@ import {
   type LocationDto,
   type PaginatedResponse,
   type Role,
+  type SiteVisitDto,
+  type SiteVisitWithCoordinatesDto,
 } from "@employee-saas/shared";
 import { writeAudit } from "../../lib/audit.js";
 import { getCompanyTimezone } from "../../lib/companyTime.js";
+import { isCompanyModuleEnabled } from "../../lib/enabledModules.js";
 import { ApiError } from "../../lib/errors.js";
-import { chooseOffice, evaluateCheckInLocation, evaluateCheckOutLocation, type GpsReading, type GpsSite } from "../../lib/gpsVerification.js";
+import {
+  checkInColumns,
+  checkOutColumns,
+  chooseOffice,
+  evaluateCheckInLocation,
+  evaluateCheckOutLocation,
+  toGpsSite,
+  type CheckInGpsResult,
+  type GpsSite,
+} from "../../lib/gpsVerification.js";
 import { normalizeWorkingDays } from "../../lib/leaveDays.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { getTenantPrisma, type TenantPrisma } from "../../lib/tenantPrisma.js";
+import { buildVisitCheckOut, findOpenVisit, toVisitDto, toVisitWithCoordinatesDto, VISIT_INCLUDE, type VisitRow } from "../siteVisits/siteVisitRows.js";
 import {
   computeAttendanceStatus,
   computeCheckOut,
@@ -110,17 +123,6 @@ async function getScheduleForDate(params: {
   });
 }
 
-function toGpsSite(site: Site): GpsSite {
-  return {
-    id: site.id,
-    name: site.name,
-    latitude: site.latitude?.toNumber() ?? null,
-    longitude: site.longitude?.toNumber() ?? null,
-    radiusMeters: site.radiusMeters,
-    gpsRequired: site.gpsRequired,
-  };
-}
-
 /** The offices a check-in can belong to. With the `sites` module off, an admin can't
  * see or edit them, so a leftover "GPS required" office mustn't lock anyone out. */
 async function getActiveOffices(tenant: TenantPrisma, settings: CompanySettings): Promise<GpsSite[]> {
@@ -147,6 +149,7 @@ async function getGpsNeed(
   settings: CompanySettings,
   record: AttendanceRecord | null,
   nextAction: AttendanceNextAction,
+  openVisit: VisitRow | null,
 ): Promise<Pick<AttendanceTodayDto, "gpsRequired" | "officeSite">> {
   const summary = (site: GpsSite) => ({ id: site.id, name: site.name, radiusMeters: site.radiusMeters });
 
@@ -156,35 +159,15 @@ async function getGpsNeed(
   }
   if (nextAction === "CHECK_OUT") {
     const site = await getCheckOutSite(tenant, settings, record!);
-    return { gpsRequired: site?.gpsRequired ?? false, officeSite: site && summary(site) };
+    // A day check-out also closes an open visit (§1.6), which may be the one that checks.
+    return { gpsRequired: site?.gpsRequired === true || openVisit?.site.gpsRequired === true, officeSite: site && summary(site) };
   }
   return { gpsRequired: false, officeSite: null };
 }
 
-function checkInColumns(reading: GpsReading) {
-  return {
-    checkInLat: reading.latitude,
-    checkInLng: reading.longitude,
-    checkInAccuracyM: reading.accuracyM,
-    checkInDistanceM: reading.distanceM,
-    checkInWithinRadius: reading.withinRadius,
-    checkInMocked: reading.mocked,
-  };
-}
-
-function checkOutColumns(reading: GpsReading) {
-  return {
-    checkOutLat: reading.latitude,
-    checkOutLng: reading.longitude,
-    checkOutAccuracyM: reading.accuracyM,
-    checkOutDistanceM: reading.distanceM,
-    checkOutWithinRadius: reading.withinRadius,
-    checkOutMocked: reading.mocked,
-  };
-}
-
-type CurrentDay = {
+export type CurrentDay = {
   settings: CompanySettings;
+  timezone: string;
   workDate: string;
   schedule: EffectiveSchedule;
   /** The record the employee is acting on now, if any (§1.3). */
@@ -202,7 +185,7 @@ type CurrentDay = {
  * date, which is what lets a night worker check out at 06:30 of a shift that ended
  * at 06:00: by the date rule alone that's already tomorrow's work date.
  */
-async function getCurrentDay(params: {
+export async function getCurrentDay(params: {
   tenant: TenantPrisma;
   companyId: string;
   employeeId: string;
@@ -240,12 +223,13 @@ async function getCurrentDay(params: {
 
   const schedule = await scheduleFor(workDate);
   const nextAction = getNextAction({ record, schedule, autoCheckoutAfterMinutes: row.autoCheckoutAfterMinutes, now });
-  return { settings: row, workDate, schedule, record, latestCheckIn, nextAction };
+  return { settings: row, timezone, workDate, schedule, record, latestCheckIn, nextAction };
 }
 
 export async function getToday(params: { companyId: string; employeeId: string }): Promise<AttendanceTodayDto> {
   const tenant = getTenantPrisma(params.companyId);
   const { settings, workDate, schedule, record, nextAction } = await getCurrentDay({ tenant, ...params, now: new Date() });
+  const openVisit = isModuleEnabled(settings, "sites") ? await findOpenVisit(tenant, params) : null;
 
   // A record shows the schedule it was judged against, which may since have changed.
   const start = record?.scheduledStartAt ?? schedule.scheduledStartAt;
@@ -261,7 +245,8 @@ export async function getToday(params: { companyId: string; employeeId: string }
     },
     record: record && toRecordWithCoordinatesDto(record),
     nextAction,
-    ...(await getGpsNeed(tenant, settings, record, nextAction)),
+    ...(await getGpsNeed(tenant, settings, record, nextAction, openVisit)),
+    openVisit: openVisit && { id: openVisit.id, siteName: openVisit.site.name, checkInAt: openVisit.checkInAt.toISOString() },
   };
 }
 
@@ -275,6 +260,46 @@ function alreadyCheckedOut() {
 
 function dayClosed() {
   return new ApiError(409, "DAY_ALREADY_CLOSED", "This day has closed. Ask HR to correct it.");
+}
+
+/** What any check-in that starts a day writes, at the office or at a site. */
+export function startOfDayColumns({ workDate, schedule, now }: { workDate: string; schedule: EffectiveSchedule; now: Date }) {
+  const { status, lateMinutes } = computeAttendanceStatus({ checkInAt: now, checkOutAt: null, autoClosedAt: null }, schedule);
+  return {
+    workDate: isoDateToUtcDate(workDate),
+    status,
+    lateMinutes,
+    scheduledStartAt: schedule.scheduledStartAt,
+    scheduledEndAt: schedule.scheduledEndAt,
+    checkInAt: now,
+  };
+}
+
+/** Turns a GPS refusal into its error (§3.2). Used for offices and sites alike. */
+export async function rejectCheckIn(
+  tenant: TenantPrisma,
+  params: { companyId: string; userId: string; siteId: string; rejection: Extract<CheckInGpsResult, { rejected: true }> },
+): Promise<never> {
+  const { companyId, userId, siteId, rejection } = params;
+  if (rejection.code === "LOCATION_REQUIRED") {
+    throw new ApiError(422, "LOCATION_REQUIRED", "Your location is needed to check in here.");
+  }
+  if (rejection.code === "OUTSIDE_SITE_RADIUS") {
+    const { distanceM, radiusM, siteName } = rejection;
+    throw new ApiError(422, "OUTSIDE_SITE_RADIUS", `You are ${distanceM} m from ${siteName}.`, { distanceM, radiusM, siteName });
+  }
+  // Only mock detection is audited: a deliberate act HR may want to see repeated.
+  // The other two are normal "try again" events, and auditing them would store a
+  // trail of where someone was. Hence no coordinates here either.
+  await writeAudit(tenant, {
+    companyId,
+    actorUserId: userId,
+    action: "ATTENDANCE_CHECKIN_REJECTED",
+    entityType: "Site",
+    entityId: siteId,
+    metadata: { reason: rejection.code, siteId },
+  });
+  throw new ApiError(422, "MOCK_LOCATION_DETECTED", "This phone is reporting a mock location.");
 }
 
 export async function checkIn(params: {
@@ -303,51 +328,25 @@ export async function checkIn(params: {
   const { site, verify } = chooseOffice(offices, location);
   const gps = verify ? evaluateCheckInLocation({ site: site!, location, maxAccuracyM: settings.gpsMaxAccuracyMeters, now }) : null;
 
-  if (gps?.rejected) {
-    if (gps.code === "LOCATION_REQUIRED") {
-      throw new ApiError(422, "LOCATION_REQUIRED", "Your location is needed to check in here.");
-    }
-    if (gps.code === "OUTSIDE_SITE_RADIUS") {
-      const { distanceM, radiusM, siteName } = gps;
-      throw new ApiError(422, "OUTSIDE_SITE_RADIUS", `You are ${distanceM} m from ${siteName}.`, { distanceM, radiusM, siteName });
-    }
-    // Only mock detection is audited: a deliberate act HR may want to see repeated.
-    // The other two are normal "try again" events, and auditing them would store a
-    // trail of where someone was. Hence no coordinates here either.
-    await writeAudit(tenant, {
-      companyId,
-      actorUserId: userId,
-      action: "ATTENDANCE_CHECKIN_REJECTED",
-      entityType: "Site",
-      entityId: site!.id,
-      metadata: { reason: gps.code, siteId: site!.id },
-    });
-    throw new ApiError(422, "MOCK_LOCATION_DETECTED", "This phone is reporting a mock location.");
-  }
+  if (gps?.rejected) await rejectCheckIn(tenant, { companyId, userId, siteId: site!.id, rejection: gps });
 
-  const reading = gps?.reading;
+  const accepted = gps && !gps.rejected ? gps : null;
   const flags: AttendanceFlag[] = [
     ...getCheckInFlags(schedule),
     ...(offices.length === 0 ? (["NO_OFFICE_SITE"] as const) : []),
-    ...(gps?.flags ?? []),
+    ...(accepted?.flags ?? []),
   ];
 
-  const { status, lateMinutes } = computeAttendanceStatus({ checkInAt: now, checkOutAt: null, autoClosedAt: null }, schedule);
   try {
     const created = await tenant.attendanceRecord.create({
       data: {
         companyId,
         employeeId,
-        workDate: isoDateToUtcDate(workDate),
-        status,
-        lateMinutes,
-        scheduledStartAt: schedule.scheduledStartAt,
-        scheduledEndAt: schedule.scheduledEndAt,
-        checkInAt: now,
+        ...startOfDayColumns({ workDate, schedule, now }),
         checkInSiteId: site?.id ?? null,
         // Only what passed through the GPS rules. A location sent for an office that
         // doesn't require GPS stops here (Q6), and never reaches a column.
-        ...(reading ? checkInColumns(reading) : {}),
+        ...(accepted ? checkInColumns(accepted.reading) : {}),
         flags,
         source: "MOBILE",
         checkInClientRequestId: clientRequestId,
@@ -401,19 +400,40 @@ export async function checkOut(params: {
     ? evaluateCheckOutLocation({ site, location, maxAccuracyM: settings.gpsMaxAccuracyMeters, now })
     : null;
 
-  // Conditional, so two simultaneous check-outs can't both write. A check-out
-  // doesn't change the status: its inputs are the check-in and the schedule (§1.4).
-  const { count } = await tenant.attendanceRecord.updateMany({
-    where: { companyId, id: open.id, checkOutAt: null, autoClosedAt: null },
-    data: {
-      checkOutAt,
-      ...outcome,
-      // Check-in may already have set the same flag, such as a low accuracy.
-      flags: [...new Set([...outcome.flags, ...(gps?.flags ?? [])])],
-      ...(gps?.reading ? checkOutColumns(gps.reading) : {}),
-    },
+  // An open visit ends with the day, at the same instant and with the same location
+  // (§1.6). Its own site decides what's kept. It's closed even with `sites` off, since
+  // nothing else could close it then, but no position is kept for it.
+  const openVisit = await findOpenVisit(tenant, { companyId, employeeId });
+  const visitCheckOut =
+    openVisit &&
+    buildVisitCheckOut({
+      visit: openVisit,
+      location,
+      maxAccuracyM: settings.gpsMaxAccuracyMeters,
+      now,
+      verifyGps: isModuleEnabled(settings, "sites"),
+    });
+
+  await tenant.$transaction(async (tx) => {
+    // Conditional, so two simultaneous check-outs can't both write. A check-out
+    // doesn't change the status: its inputs are the check-in and the schedule (§1.4).
+    const { count } = await tx.attendanceRecord.updateMany({
+      where: { companyId, id: open.id, checkOutAt: null, autoClosedAt: null },
+      data: {
+        checkOutAt,
+        ...outcome,
+        // Check-in may already have set the same flag, such as a low accuracy.
+        flags: [...new Set([...outcome.flags, ...(gps?.flags ?? [])])],
+        ...(gps?.reading ? checkOutColumns(gps.reading) : {}),
+      },
+    });
+    if (count === 0) throw alreadyCheckedOut();
+
+    // Conditional too: they may have checked out of the visit a moment ago.
+    if (visitCheckOut) {
+      await tx.siteVisit.updateMany({ where: { companyId, id: openVisit!.id, status: "OPEN" }, data: visitCheckOut });
+    }
   });
-  if (count === 0) throw alreadyCheckedOut();
 
   return toRecordWithCoordinatesDto(await tenant.attendanceRecord.findUniqueOrThrow({ where: { id: open.id } }));
 }
@@ -448,9 +468,13 @@ export async function getRecord(params: {
   role: Role;
   callerEmployeeId: string | null;
   recordId: string;
-}): Promise<AttendanceRecordDto | AttendanceRecordWithCoordinatesDto> {
+}): Promise<{
+  record: AttendanceRecordDto | AttendanceRecordWithCoordinatesDto;
+  siteVisits: (SiteVisitDto | SiteVisitWithCoordinatesDto)[];
+}> {
   const { companyId, role, callerEmployeeId, recordId } = params;
-  const record = await getTenantPrisma(companyId).attendanceRecord.findUnique({
+  const tenant = getTenantPrisma(companyId);
+  const record = await tenant.attendanceRecord.findUnique({
     where: { id: recordId },
     include: { employee: { select: { managerId: true } } },
   });
@@ -458,10 +482,19 @@ export async function getRecord(params: {
   if (!record) throw notFound;
 
   const isOwner = callerEmployeeId !== null && record.employeeId === callerEmployeeId;
-  if (isOwner || role === "HR" || role === "COMPANY_ADMIN") return toRecordWithCoordinatesDto(record);
-
+  const seesCoordinates = isOwner || role === "HR" || role === "COMPANY_ADMIN";
   const isTheirManager = role === "MANAGER" && callerEmployeeId !== null && record.employee.managerId === callerEmployeeId;
-  if (isTheirManager) return toRecordDto(record);
+  if (!seesCoordinates && !isTheirManager) throw notFound;
 
-  throw notFound;
+  const visits = (await isCompanyModuleEnabled(companyId, "sites"))
+    ? await tenant.siteVisit.findMany({
+        where: { companyId, attendanceRecordId: record.id },
+        include: VISIT_INCLUDE,
+        orderBy: { checkInAt: "asc" },
+      })
+    : [];
+
+  return seesCoordinates
+    ? { record: toRecordWithCoordinatesDto(record), siteVisits: visits.map(toVisitWithCoordinatesDto) }
+    : { record: toRecordDto(record), siteVisits: visits.map(toVisitDto) };
 }

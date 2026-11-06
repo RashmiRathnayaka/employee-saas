@@ -1,12 +1,19 @@
+import type { Site } from "@prisma/client";
 import { haversineMeters, type AttendanceFlag, type LocationDto } from "@employee-saas/shared";
 
 /**
  * The GPS rules as pure functions: architecture-phase2 §3.2. Nothing here reads the
  * clock or the database, so every row of that table can be tested with plain values.
- * Site visits (step 2.5) use the same rules with the chosen site.
+ * Office attendance and site visits use the same rules, each with its own site.
  */
 
 const STALE_AFTER_MS = 2 * 60_000;
+
+/** The flags these rules can add. Attendance records and site visits both hold them. */
+export type GpsFlag = Extract<
+  AttendanceFlag,
+  "LOW_ACCURACY" | "OUTSIDE_RADIUS_AT_CHECKOUT" | "MOCK_LOCATION_AT_CHECKOUT" | "LOCATION_UNAVAILABLE_AT_CHECKOUT" | "STALE_LOCATION"
+>;
 
 export type GpsSite = {
   id: string;
@@ -27,6 +34,40 @@ export type GpsReading = {
   withinRadius: boolean;
   mocked: boolean;
 };
+
+export function toGpsSite(site: Site): GpsSite {
+  return {
+    id: site.id,
+    name: site.name,
+    latitude: site.latitude?.toNumber() ?? null,
+    longitude: site.longitude?.toNumber() ?? null,
+    radiusMeters: site.radiusMeters,
+    gpsRequired: site.gpsRequired,
+  };
+}
+
+/** The columns a reading fills. Attendance records and site visits name them alike. */
+export function checkInColumns(reading: GpsReading) {
+  return {
+    checkInLat: reading.latitude,
+    checkInLng: reading.longitude,
+    checkInAccuracyM: reading.accuracyM,
+    checkInDistanceM: reading.distanceM,
+    checkInWithinRadius: reading.withinRadius,
+    checkInMocked: reading.mocked,
+  };
+}
+
+export function checkOutColumns(reading: GpsReading) {
+  return {
+    checkOutLat: reading.latitude,
+    checkOutLng: reading.longitude,
+    checkOutAccuracyM: reading.accuracyM,
+    checkOutDistanceM: reading.distanceM,
+    checkOutWithinRadius: reading.withinRadius,
+    checkOutMocked: reading.mocked,
+  };
+}
 
 type Verification = {
   /** A GPS-required site always has coordinates: the database insists on it. */
@@ -57,7 +98,7 @@ function isStale(location: LocationDto, now: Date): boolean {
 export type CheckInGpsResult =
   | { rejected: true; code: "LOCATION_REQUIRED" | "MOCK_LOCATION_DETECTED" }
   | { rejected: true; code: "OUTSIDE_SITE_RADIUS"; distanceM: number; radiusM: number; siteName: string }
-  | { rejected: false; reading: GpsReading; flags: AttendanceFlag[] };
+  | { rejected: false; reading: GpsReading; flags: GpsFlag[] };
 
 /** The "At check-in" column of §3.2, for a site that requires GPS. */
 export function evaluateCheckInLocation(params: Omit<Verification, "location"> & { location: LocationDto | null }): CheckInGpsResult {
@@ -77,7 +118,7 @@ export function evaluateCheckInLocation(params: Omit<Verification, "location"> &
   if (outside) return { rejected: true, code: "OUTSIDE_SITE_RADIUS", distanceM, radiusM, siteName: site.name };
 
   const certainlyInside = goodFix || distanceM + accuracyM <= radiusM;
-  const flags: AttendanceFlag[] = [];
+  const flags: GpsFlag[] = [];
   if (!certainlyInside) flags.push("LOW_ACCURACY");
   if (isStale(location, now)) flags.push("STALE_LOCATION");
   return { rejected: false, reading, flags };
@@ -87,13 +128,13 @@ export function evaluateCheckInLocation(params: Omit<Verification, "location"> &
  * check-out would leave the record open and turn into a worse INCOMPLETE. */
 export function evaluateCheckOutLocation(params: Omit<Verification, "location"> & { location: LocationDto | null }): {
   reading: GpsReading | null;
-  flags: AttendanceFlag[];
+  flags: GpsFlag[];
 } {
   const { site, location, maxAccuracyM, now } = params;
   if (!location) return { reading: null, flags: ["LOCATION_UNAVAILABLE_AT_CHECKOUT"] };
 
   const reading = measure({ site, location });
-  const flags: AttendanceFlag[] = [];
+  const flags: GpsFlag[] = [];
   if (location.mocked) flags.push("MOCK_LOCATION_AT_CHECKOUT");
   if (reading.accuracyM > maxAccuracyM) flags.push("LOW_ACCURACY");
   else if (!reading.withinRadius) flags.push("OUTSIDE_RADIUS_AT_CHECKOUT");
