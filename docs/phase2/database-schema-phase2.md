@@ -5,8 +5,9 @@
 the new `company_settings` columns and `notifications.dedupeKey`. Step 2.2,
 `20261106120000_phase2_sites`: the `sites` table and the
 `company_settings.gpsRadiusMeters` CHECK. Step 2.3,
-`20261106150000_phase2_attendance`: the `attendance_records` table. The other new
-tables aren't migrated yet.
+`20261106150000_phase2_attendance`: the `attendance_records` table. Step 2.4 needed
+no migration: it fills GPS columns that already exist. The other new tables aren't
+migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.

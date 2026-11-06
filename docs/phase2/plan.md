@@ -1,9 +1,9 @@
 # Phase 2 plan — Attendance & Site Management
 
 **Status: approved. All open questions were resolved by the developer on
-2026-11-03 (see "Resolved questions" at the end).** Steps 2.1, 2.2 and 2.3 are
-implemented (`docs/reports/step-2.1.md`, `step-2.2.md`, `step-2.3.md`). Step 2.4
-starts when the developer says so.
+2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 to 2.4 are
+implemented (`docs/reports/step-2.1.md` to `step-2.4.md`). Step 2.5 starts when the
+developer says so.
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).

@@ -3,7 +3,8 @@
 **Status: design approved. The open questions were resolved by the
 developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
 Implemented so far: step 2.1 (module gating, settings, shared helpers), step
-2.2 (sites) and step 2.3 (office attendance, without GPS).
+2.2 (sites), step 2.3 (office attendance) and step 2.4 (GPS verification and the
+privacy disclosure).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -148,11 +149,13 @@ check-out errors:
 | Checked in, past its close time or auto-closed | `DAY_CLOSED` | `DAY_ALREADY_CLOSED` | `DAY_ALREADY_CLOSED` |
 | Checked out | `DONE` | `ALREADY_CHECKED_OUT` | `ALREADY_CHECKED_OUT` |
 
-- **A check-in after the day's close time is refused** (decided in step 2.3; the
-  developer is asked to confirm in the step report). From step 2.7, day close has
-  already written an `ABSENT` row by then, and a check-in that closes at once would
-  be useless. HR can correct the day. A day-shift worker's next chance is after
-  midnight, when the work date moves on.
+- **A check-in after the day's close time is refused** (confirmed by the developer,
+  2026-11-06). From step 2.7, day close has already written an `ABSENT` row by then,
+  and a check-in that closes at once would be useless. HR can correct the day. A
+  day-shift worker's next chance is after midnight, when the work date moves on.
+  People who really work nights get a per-employee schedule (step 2.6).
+- **The app asks "Are you sure?" before a check-out** (decided by the developer,
+  2026-11-06), because a mistaken tap can only be undone by an HR correction.
 - **Check-out with no current record** normally answers `NOT_CHECKED_IN`. If the
   latest check-in is still open or auto-closed, and is from this work date or the
   day before, it answers `DAY_ALREADY_CLOSED`. That's a night worker tapping check-out
@@ -313,6 +316,29 @@ This section was decided in Q2.
   - Otherwise the server compares the location with the **nearest** active
     `OFFICE` site and applies that site's `gpsRequired` / `radiusMeters`.
   - The app doesn't ask the employee to pick an office.
+  - **Details settled in step 2.4** (`apps/api/src/lib/gpsVerification.ts`):
+    - **With the `sites` module off, there are no offices**, so the flag is
+      `NO_OFFICE_SITE`. An admin can't see or edit sites then, so a leftover
+      GPS-required office mustn't lock anyone out.
+    - **One office that doesn't require GPS:** `checkInSiteId` is that office.
+      **Several that don't:** it's NULL. No location is kept for them (Q6), so the
+      nearest can't be known, and picking one would be a guess.
+    - **If any office requires GPS, the app must send a location.** A tap without
+      one can't be placed, and treating it as "no check" would let anyone skip the
+      check by turning location off.
+    - **A mocked fix is only compared with offices that require GPS**, so a fake
+      position next to an office that doesn't check can't skip the check.
+    - **An office with no coordinates can't be the nearest.** So in a company that
+      has one, next to an office that requires GPS, someone at the first is judged
+      against the second and refused. Give every office coordinates in that case.
+    - **Check-out is compared with the office its check-in used**, not the nearest
+      one at that moment, and only if that office requires GPS now. A record with no
+      `checkInSiteId` isn't checked at check-out.
+  - **`/attendance/me/today` doesn't know the phone's location**, because it's only
+    read on a tap. So its `gpsRequired` means "this tap should read the location":
+    before check-in, any active office requires GPS; before check-out, the check-in's
+    office does. `officeSite` is the only office or the check-in's office, otherwise
+    null. It never has coordinates.
 
 ---
 
@@ -342,9 +368,12 @@ This section was decided in Q2.
   site's stored coordinates. It stores lat, lng, accuracy, distance,
   `withinRadius` and `mocked`.
   - The client never sends a distance or a "within" flag.
-  - The haversine function lives in `packages/shared` so the app can show
-    "You're about 850 m from Site X" before submitting. Only the server's
-    answer counts.
+  - **Decisions use the same whole metres that are stored**, so a row always
+    explains its own outcome: 201 m against a 200 m radius is outside.
+  - The haversine function lives in `packages/shared`, but the app doesn't show a
+    distance before submitting: employees aren't given site coordinates
+    (`permissions-phase2.md`). The distance comes from the server's refusal.
+  - A fix with no accuracy can't be judged, so the app treats it as no fix.
 
 ### 3.2 The three hard cases: rejected, or allowed but flagged?
 These rules apply when the site has `gpsRequired = true`:
@@ -395,7 +424,9 @@ store a location trail of failed attempts. Only mock detection is.
   >   away you were. HR can also see the exact position.
   > - Exact positions are deleted after **{gpsRetentionDays} days**. Whether
   >   you were inside the area is kept with your attendance record.
-- "Continue" opens the OS permission dialog; "Not now" goes back.
+- "Continue" opens the OS permission dialog; "Not now" goes back and sends nothing.
+- It's remembered per phone, like the OS permission, and isn't shown if location is
+  already allowed. On a check-out it comes after the "Are you sure?".
 - The same text is always available under **Profile → Location & privacy**,
   which also shows the current OS permission state.
 - Wording lives in `strings.ts` (it's English-only, like Phase 1).
