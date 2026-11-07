@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @employee-saas/api --filter @employee-saas/web dev",
+    "dev": "pnpm --parallel --filter @employee-saas/api --filter @employee-saas/web run \"/^dev(:worker)?$/\"",
     "build": "pnpm -r build",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "typecheck": "pnpm -r typecheck",
