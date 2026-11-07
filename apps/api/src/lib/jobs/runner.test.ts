@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { platformPrisma } from "../prisma.js";
 import { createTestCompany } from "../../test/helpers.js";
-import { claimRun, getWorkerStatus, runTick, sanitiseError, type Job } from "./runner.js";
+import { claimRun, getWorkerStatus, runTick, sanitiseError, type Job, type PlatformJob } from "./runner.js";
 
 const NOW = new Date("2026-11-03T10:00:00.000Z");
 const minutesLater = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
@@ -129,6 +129,54 @@ describe("runTick", () => {
     await runTick([testJob], NOW);
 
     expect(testJob.run).not.toHaveBeenCalled();
+  });
+
+  it("runs a job marked runsWhileSuspended for a suspended company, and only that job", async () => {
+    const suspended = await createTestCompany({ status: "SUSPENDED" });
+    const active = await createTestCompany();
+    const purge = job({ name: "test.purge", runsWhileSuspended: true });
+    const reminder = job({ name: "test.reminder" });
+
+    await runTick([purge, reminder], NOW);
+
+    expect((await runRows("test.purge")).map((row) => row.companyId).sort()).toEqual([suspended.id, active.id].sort());
+    expect((await runRows("test.reminder")).map((row) => row.companyId)).toEqual([active.id]);
+  });
+
+  describe("platform-wide jobs", () => {
+    function platformJob(overrides: Partial<PlatformJob> = {}): PlatformJob {
+      return { name: "test.platform", dueRunKeys: () => ["2026-11-03"], run: vi.fn(async () => undefined), ...overrides };
+    }
+
+    it("run once per key, with no company, even with no companies at all", async () => {
+      const testJob = platformJob();
+
+      await runTick([], NOW, [testJob]);
+      await runTick([], minutesLater(1), [testJob]);
+
+      expect(testJob.run).toHaveBeenCalledTimes(1);
+      expect(testJob.run).toHaveBeenCalledWith(NOW, "2026-11-03");
+      expect(await runRows("test.platform")).toMatchObject([{ companyId: null, status: "DONE" }]);
+    });
+
+    it("two workers on the same tick: it runs once", async () => {
+      const testJob = platformJob();
+
+      await Promise.all([runTick([], NOW, [testJob]), runTick([], NOW, [testJob])]);
+
+      expect(testJob.run).toHaveBeenCalledTimes(1);
+    });
+
+    it("a failure is recorded and doesn't stop the companies' jobs", async () => {
+      await createTestCompany();
+      const failing = platformJob({ run: async () => Promise.reject(new Error("boom")) });
+      const companyJob = job();
+
+      await runTick([companyJob], NOW, [failing]);
+
+      expect((await runRows("test.platform"))[0]).toMatchObject({ status: "FAILED", lastError: "Error: boom" });
+      expect(companyJob.run).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("when a job throws", () => {

@@ -15,6 +15,9 @@ export const NOTIFICATION_TYPES = [
   "ATTENDANCE_CORRECTED", // -> the employee, with the reason (a record or a site visit)
   "ATTENDANCE_AUTO_CLOSED", // day close -> the employee who didn't check out
   "SITE_VISIT_AUTO_CLOSED", // day close -> the employee who didn't check out of a visit
+  "CHECKIN_REMINDER", // -> the employee, at their shift start; points at nothing (there's no record yet)
+  "LEAVE_PROOF_DUE_SOON", // -> the employee, the day before the proof deadline
+  "LEAVE_PROOF_OVERDUE", // -> every active HR user except the requester, once per request
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;

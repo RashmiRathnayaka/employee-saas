@@ -55,6 +55,24 @@ export async function createNotificationOnce(
   await client.notification.createMany({ data: [input as never], skipDuplicates: true });
 }
 
+export type BatchNotificationInput = Omit<CreateNotificationInput, "relatedEntityType" | "relatedEntityId"> & {
+  /** Null when there's nothing to open yet, as for a check-in reminder. */
+  relatedEntityType: NotificationEntityType | null;
+  relatedEntityId: string | null;
+  dedupeKey: string;
+};
+
+/** `createNotificationOnce` for many at once, in one INSERT: a reminder job may write
+ * one per employee. Any that were already sent are skipped by their `dedupeKey`. */
+export async function createNotificationsOnce(
+  client: { notification: { createMany(args: { data: never[]; skipDuplicates: boolean }): Promise<{ count: number }> } },
+  inputs: BatchNotificationInput[],
+): Promise<number> {
+  if (inputs.length === 0) return 0;
+  const { count } = await client.notification.createMany({ data: inputs as never[], skipDuplicates: true });
+  return count;
+}
+
 /** Who to tell about an employee, if they can log in to see it. Looked up when sending,
  * and never stored in a job's tables (architecture-phase2 §7). */
 export async function findLoginUserIdForEmployee(

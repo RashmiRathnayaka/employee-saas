@@ -16,8 +16,10 @@ export const TICK_INTERVAL_MS = 30_000;
 const STUCK_AFTER_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 3;
 const LAST_ERROR_MAX_LENGTH = 200;
-/** The worker's one row saying it's alive. It's updated, so it doesn't grow. */
-const HEARTBEAT = { jobName: "worker.tick", runKey: "heartbeat" };
+/** The worker's one row saying it's alive. It's updated, so it doesn't grow, and housekeeping
+ * never deletes it. */
+export const HEARTBEAT_JOB_NAME = "worker.tick";
+const HEARTBEAT = { jobName: HEARTBEAT_JOB_NAME, runKey: "heartbeat" };
 /** `/health` calls the worker down if its last tick is older than this. */
 const WORKER_OK_WITHIN_MS = 2 * 60_000;
 
@@ -32,11 +34,21 @@ export type Job = {
   name: string;
   /** Skipped for a company with this module off (§0). */
   module?: CompanyModule;
+  /** Also runs for a suspended company. Only for a duty that doesn't depend on the
+   * company paying, such as erasing coordinates past their retention (§3.5). */
+  runsWhileSuspended?: boolean;
   /** Runs on every tick with no claim, so it must be cheap and idempotent. */
   everyTick?(context: JobContext): Promise<void>;
   /** What should have run by now. Each key runs once, whichever worker claims it. */
   dueRunKeys?(context: JobContext): Promise<string[]>;
   run?(context: JobContext, runKey: string): Promise<void>;
+};
+
+/** A job for the whole platform, such as housekeeping. Its claim row has no company. */
+export type PlatformJob = {
+  name: string;
+  dueRunKeys(now: Date): string[];
+  run(now: Date, runKey: string): Promise<void>;
 };
 
 type RunId = { jobName: string; companyId: string | null; runKey: string };
@@ -77,16 +89,15 @@ export function sanitiseError(err: unknown): string {
   return `${typeof code === "string" ? code : err.name}: ${firstLine}`.slice(0, LAST_ERROR_MAX_LENGTH);
 }
 
-async function runClaimed(job: Job, context: JobContext, runKey: string): Promise<void> {
-  const id: RunId = { jobName: job.name, companyId: context.company.id, runKey };
-  if (!(await claimRun(id, context.now))) return;
+async function runClaimed(id: RunId, now: Date, work: () => Promise<void>): Promise<void> {
+  if (!(await claimRun(id, now))) return;
 
   try {
-    await job.run!(context, runKey);
-    await platformPrisma.jobRun.updateMany({ where: id, data: { status: "DONE", finishedAt: context.now, lastError: null } });
+    await work();
+    await platformPrisma.jobRun.updateMany({ where: id, data: { status: "DONE", finishedAt: now, lastError: null } });
   } catch (err) {
     const lastError = sanitiseError(err);
-    await platformPrisma.jobRun.updateMany({ where: id, data: { status: "FAILED", finishedAt: context.now, lastError } });
+    await platformPrisma.jobRun.updateMany({ where: id, data: { status: "FAILED", finishedAt: now, lastError } });
     // The object, not `err`: the logger must not get row data either.
     logger.error({ ...id, lastError }, "Job failed");
   }
@@ -97,7 +108,9 @@ async function runJobForCompany(job: Job, context: JobContext): Promise<void> {
   try {
     await job.everyTick?.(context);
     if (job.dueRunKeys && job.run) {
-      for (const runKey of await job.dueRunKeys(context)) await runClaimed(job, context, runKey);
+      for (const runKey of await job.dueRunKeys(context)) {
+        await runClaimed({ jobName: job.name, companyId: context.company.id, runKey }, context.now, () => job.run!(context, runKey));
+      }
     }
   } catch (err) {
     logger.error({ jobName: job.name, companyId: context.company.id, lastError: sanitiseError(err) }, "Job failed");
@@ -115,19 +128,32 @@ async function writeHeartbeat(now: Date): Promise<void> {
   }
 }
 
-/** One pass over every active company. A suspended company runs nothing. */
-export async function runTick(jobs: Job[], now: Date): Promise<void> {
+async function runPlatformJob(job: PlatformJob, now: Date): Promise<void> {
+  try {
+    for (const runKey of job.dueRunKeys(now)) {
+      await runClaimed({ jobName: job.name, companyId: null, runKey }, now, () => job.run(now, runKey));
+    }
+  } catch (err) {
+    logger.error({ jobName: job.name, lastError: sanitiseError(err) }, "Job failed");
+  }
+}
+
+/** One pass over the platform's jobs, then every company. A suspended company runs only
+ * the jobs marked `runsWhileSuspended`. */
+export async function runTick(jobs: Job[], now: Date, platformJobs: PlatformJob[] = []): Promise<void> {
   await writeHeartbeat(now);
+  for (const job of platformJobs) await runPlatformJob(job, now);
 
   const companies = await platformPrisma.company.findMany({
-    where: { status: "ACTIVE" },
-    select: { id: true, timezone: true, settings: true },
+    where: jobs.some((job) => job.runsWhileSuspended) ? {} : { status: "ACTIVE" },
+    select: { id: true, status: true, timezone: true, settings: true },
   });
 
-  for (const { settings, ...company } of companies) {
+  for (const { settings, status, ...company } of companies) {
     if (!settings) continue;
     const context: JobContext = { tenant: getTenantPrisma(company.id), company, settings, now };
     for (const job of jobs) {
+      if (status !== "ACTIVE" && !job.runsWhileSuspended) continue;
       if (job.module && !isModuleEnabled(settings, job.module)) continue;
       await runJobForCompany(job, context);
     }
