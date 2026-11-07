@@ -4,6 +4,144 @@ Multi-tenant Employee Management SaaS platform. See `CLAUDE.md` for the project
 guide and `docs/` for the Phase 1 design (architecture, database schema,
 permissions, API).
 
+## How the complete system works
+
+```mermaid
+flowchart TB
+    %% ===== 1. Buying =====
+    subgraph Buy["① Company buys the system"]
+        subgraph BuyRow[" "]
+            B1["🌐 <b>Sales website</b><br/>features · pricing · demo"]
+            B2["📦 Pick a plan<br/>HR product<br/>monthly / yearly"]
+            B3["📝 Sign up<br/>company details<br/>first admin"]
+            B4["🎁 Free trial starts<br/>workspace created<br/>default settings"]
+            B5["💳 <b>PayHere</b> payment<br/>recurring monthly / yearly"]
+        end
+    end
+
+    %% ===== 2. Identity + Billing =====
+    subgraph IB["② Identity + Billing platform"]
+        subgraph IBRow[" "]
+            I1["🔐 <b>One customer account</b><br/>company · users · roles<br/>login · tokens"]
+            I2["🧾 <b>Subscriptions</b><br/>one per product<br/>TRIALING · ACTIVE · PAST_DUE · EXPIRED"]
+            I3["💼 <b>Customer billing portal</b><br/>Company Admin<br/>plan · invoices · cancel"]
+            I4["👑 <b>Super Admin dashboard</b><br/>companies · plans · revenue<br/>trials · failed payments"]
+        end
+    end
+
+    Buy -- "account + trial subscription + paid invoices" --> IB
+
+    %% ===== 3. Daily use =====
+    subgraph Use["③ Daily use · HR subscription covers web + mobile"]
+        subgraph UseRow[" "]
+            W1["🏢 <b>Company Admin</b> · web<br/>branding · modules · workflows<br/>users & roles · billing"]
+            W2["👩‍💼 <b>HR</b> · web<br/>employees · leave policies<br/>attendance · payroll · posts"]
+            W3["👨‍💼 <b>Manager</b> · web<br/>approve team leave<br/>team attendance · site visits · tasks"]
+            W4["📱 <b>Employee</b> · mobile app<br/>leave · proofs · check-in/out<br/>site visits · tasks · payslips · feed"]
+        end
+    end
+
+    IB -- "login · role · active subscription" --> Use
+
+    %% ===== 4. API =====
+    GATE{{"⚙️ <b>API · /api/v1</b> — every request:<br/>logged in? → company active? → <b>subscription active?</b> → module on? → role allowed? → valid data? → only this company's data"}}
+
+    Use -- "HTTPS JSON" --> GATE
+
+    %% ===== 5. Modules =====
+    subgraph Mods["④ Product modules"]
+        subgraph ModsRow[" "]
+            M1["👥 Org & Employees<br/>departments · designations<br/>managers · profiles"]
+            M2["🌴 Leave<br/>request → manager → HR<br/>balances · sick-leave proofs"]
+            M3["🕘 Attendance<br/>check-in/out · GPS<br/>late · absent · corrections"]
+            M4["📍 Site visits<br/>check-in at customer sites<br/>manager alerted"]
+            M5["✅ Tasks & schedules"]
+            M6["💰 Payroll<br/>salary · allowances<br/>payslips"]
+            M7["📣 Social hub<br/>announcements · awards<br/>events · comments"]
+            M8["📊 Reports<br/>dashboards · Excel / PDF"]
+        end
+    end
+
+    GATE --> Mods
+
+    %% ===== 6. Automation =====
+    subgraph Auto["⑤ Background worker · runs on its own"]
+        subgraph AutoRow[" "]
+            A1["🌙 Day close<br/>auto check-out<br/>mark absent / leave / holiday"]
+            A2["⏰ Reminders<br/>check-in · proof due<br/>payslip ready"]
+            A3["🧾 Billing jobs<br/>trial expiry · renewal tracking<br/>updates subscriptions"]
+            A4["🧹 GPS purge<br/>housekeeping"]
+        end
+    end
+
+    %% ===== 7. Notify =====
+    subgraph Notify["⑥ People get told"]
+        subgraph NotifyRow[" "]
+            N1["🔔 In-app notifications"]
+            N2["📲 Push to phone<br/>Expo / Firebase"]
+            N3["✉️ Email"]
+        end
+    end
+
+    Mods -- "leave approved · site check-in · payslip · post" --> Notify
+    Auto -- "reminders · trial ending · auto-closed" --> Notify
+
+    %% ===== 8. Data =====
+    subgraph Data["💾 Data · every row belongs to one company"]
+        subgraph DataRow[" "]
+            D1[("<b>PostgreSQL</b><br/>companies · employees · leave<br/>attendance · payroll · subscriptions<br/>audit logs")]
+            D2[("<b>Private storage · S3</b><br/>medical proofs · payslips<br/>photos")]
+        end
+    end
+
+    Mods -- "one transaction + audit log" --> Data
+    Auto --> Data
+    Notify ~~~ Data
+
+    PH(["💳 PayHere"])
+    PH -. "payment notification<br/>(verified signature)" .-> IB
+    GATE ~~~ Auto
+
+    classDef buy fill:#fef3c7,stroke:#d97706,color:#000
+    classDef ib fill:#ffedd5,stroke:#ea580c,color:#000
+    classDef use fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef api fill:#ede9fe,stroke:#7c3aed,color:#000
+    classDef job fill:#fce7f3,stroke:#db2777,color:#000
+    classDef note fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef data fill:#dcfce7,stroke:#16a34a,color:#000
+    classDef ext fill:#fff,stroke:#ea580c,color:#000
+    class B1,B2,B3,B4,B5 buy
+    class I1,I2,I3,I4 ib
+    class W1,W2,W3,W4 use
+    class GATE,M1,M2,M3,M4,M5,M6,M7,M8 api
+    class A1,A2,A3,A4 job
+    class N1,N2,N3 note
+    class D1,D2 data
+    class PH ext
+    style BuyRow fill:none,stroke:none
+    style IBRow fill:none,stroke:none
+    style UseRow fill:none,stroke:none
+    style ModsRow fill:none,stroke:none
+    style AutoRow fill:none,stroke:none
+    style NotifyRow fill:none,stroke:none
+    style DataRow fill:none,stroke:none
+```
+
+1. **A company buys the system** on the sales website: it picks a plan, signs up, gets a free trial
+   with its own workspace, and pays through PayHere (monthly or yearly, renewed automatically).
+2. **The Identity + Billing platform** holds one account per company, its users and roles, and one
+   subscription per product. Company Admins manage billing in the customer portal; the platform team
+   watches every company, plan and payment from the Super Admin dashboard. PayHere confirms each
+   payment with a signed notification.
+3. **Daily use:** Company Admin, HR and Managers work in the web portal; employees use the mobile app.
+   One HR subscription covers both.
+4. **Every request** passes the same checks, including "is this company's subscription active?",
+   and only ever sees its own company's data.
+5. **The background worker** closes each work day, sends reminders, tracks trial expiry and renewals,
+   and clears old GPS data.
+6. **People are told** through in-app notifications, phone push and email.
+
+
 ## Stack
 
 ```
