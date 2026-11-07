@@ -1,4 +1,5 @@
-import { isValidShiftLength, SHIFT_LENGTH_MESSAGE, type UpdateCompanySettingsRequest } from "@employee-saas/shared";
+import { isModuleEnabled, isValidShiftLength, SHIFT_LENGTH_MESSAGE, type UpdateCompanySettingsRequest } from "@employee-saas/shared";
+import { syncAttendanceWithHoliday } from "../attendance/attendanceHooks.js";
 import { diffFields } from "../../lib/auditDiff.js";
 import { invalidateEnabledModulesCache } from "../../lib/enabledModules.js";
 import { ApiError } from "../../lib/errors.js";
@@ -75,7 +76,13 @@ export async function updateOwnSettings(params: {
       data.enabledModules = { ...(existing.enabledModules as Record<string, unknown>), ...params.data.enabledModules };
     }
 
-    const saved = await tx.companySettings.update({ where: { companyId: params.companyId }, data });
+    // Day close only marks days that started after this: before it, nobody could check in.
+    const attendanceTurnedOn = params.data.enabledModules?.attendance === true && !isModuleEnabled(existing, "attendance");
+
+    const saved = await tx.companySettings.update({
+      where: { companyId: params.companyId },
+      data: { ...data, ...(attendanceTurnedOn ? { attendanceEnabledAt: new Date() } : {}) },
+    });
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,
@@ -107,6 +114,7 @@ export async function createHoliday(params: { companyId: string; actorUserId: st
 
   return tenant.$transaction(async (tx) => {
     const holiday = await tx.companyHoliday.create({ data: { companyId: params.companyId, date, name: params.name } });
+    await syncAttendanceWithHoliday(tx, { companyId: params.companyId, date });
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,
@@ -128,6 +136,7 @@ export async function deleteHoliday(params: { companyId: string; actorUserId: st
 
   await tenant.$transaction(async (tx) => {
     await tx.companyHoliday.delete({ where: { id: params.holidayId } });
+    await syncAttendanceWithHoliday(tx, { companyId: params.companyId, date: holiday.date });
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,

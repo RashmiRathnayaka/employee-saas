@@ -7,6 +7,9 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
 
+  // "false" makes a worker start and run no jobs, such as on a server that shouldn't.
+  JOBS_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+
   STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
   FILE_TOKEN_SECRET: z.string().min(32, "FILE_TOKEN_SECRET must be at least 32 characters"),
   STORAGE_LOCAL_PATH: z.string().min(1).default("./storage-data"),

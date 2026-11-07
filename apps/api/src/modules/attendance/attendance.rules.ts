@@ -8,7 +8,7 @@ import { getWorkDayWeight, type WorkingDaysConfig } from "../../lib/leaveDays.js
  */
 
 const ONE_MINUTE_MS = 60_000;
-const LONG_SHIFT_MINUTES = 16 * 60;
+export const LONG_SHIFT_MINUTES = 16 * 60;
 const MINUTES_IN_A_DAY = 24 * 60;
 
 export type EffectiveSchedule = {

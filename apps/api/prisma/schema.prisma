@@ -37,6 +37,7 @@ model Company {
   siteVisits            SiteVisit[]
   employeeSchedules     EmployeeSchedule[]
   attendanceCorrections AttendanceCorrection[]
+  jobRuns               JobRun[]
 
   @@map("companies")
 }
@@ -66,6 +67,9 @@ model CompanySettings {
   dailyReminderTime          String                @default("09:00")
   gpsMaxAccuracyMeters       Int                   @default(100)
   gpsRetentionDays           Int                   @default(90)
+  // When the attendance module was last switched on. Day close never marks a day that
+  // started before this: nobody could check in then. See architecture-phase2 §5.4.
+  attendanceEnabledAt        DateTime?
   updatedAt                  DateTime              @updatedAt
 
   @@map("company_settings")
@@ -509,6 +513,33 @@ model AttendanceCorrection {
   @@index([companyId, attendanceRecordId])
   @@index([companyId, siteVisitId])
   @@map("attendance_corrections")
+}
+
+// One row per (job, company, run key): whoever inserts it runs the job. See
+// docs/phase2/architecture-phase2.md §5.3. companyId is NULL for platform-wide jobs, and
+// the unique index treating NULLs as equal is added by hand in the migration SQL.
+// Not a tenant table: only the job runner touches it, through the platform client.
+model JobRun {
+  id         String       @id @default(uuid())
+  companyId  String?
+  company    Company?     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  jobName    String
+  runKey     String
+  status     JobRunStatus @default(RUNNING)
+  attempts   Int          @default(1)
+  startedAt  DateTime
+  finishedAt DateTime?
+  // An error code and a short message, never row data.
+  lastError  String?
+
+  @@index([status, startedAt])
+  @@map("job_runs")
+}
+
+enum JobRunStatus {
+  RUNNING
+  DONE
+  FAILED
 }
 
 enum SiteVisitStatus {

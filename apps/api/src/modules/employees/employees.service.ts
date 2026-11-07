@@ -5,6 +5,7 @@ import { getTenantPrisma } from "../../lib/tenantPrisma.js";
 import { writeAudit } from "../../lib/audit.js";
 import { generateTempPassword } from "../../lib/tempPassword.js";
 import { hashPassword } from "../../lib/passwordHashing.js";
+import { closeOpenWorkOfEmployee } from "../attendance/attendanceHooks.js";
 import { lockOrCreateBalance } from "../leaveRequests/leaveRequests.service.js";
 import { getCompanyCurrentYear } from "../../lib/companyTime.js";
 import { createNotification, leaveRangeText } from "../../lib/notifications.js";
@@ -390,12 +391,19 @@ export async function updateEmployeeStatus(params: {
       }
     }
 
+    // Nothing of theirs stays open: architecture-phase2 §1.5.
+    const closedWork =
+      params.status === "INACTIVE"
+        ? await closeOpenWorkOfEmployee(tx, { companyId: params.companyId, employeeId: params.employeeId, now: new Date() })
+        : undefined;
+
     await writeAudit(tx, {
       companyId: params.companyId,
       actorUserId: params.actorUserId,
       action: params.status === "INACTIVE" ? "EMPLOYEE_DEACTIVATED" : "EMPLOYEE_REACTIVATED",
       entityType: "Employee",
       entityId: params.employeeId,
+      metadata: closedWork,
     });
     return updated;
   });

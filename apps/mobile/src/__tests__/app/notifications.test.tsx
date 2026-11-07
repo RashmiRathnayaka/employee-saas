@@ -191,6 +191,24 @@ describe("NotificationsScreen", () => {
       expect(router.push).toHaveBeenCalledWith("/my-visits");
     });
 
+    it("a day closed without a check-out opens the Attendance tab", async () => {
+      notifications = [makeNotification({ type: "ATTENDANCE_AUTO_CLOSED", title: "You didn't check out", relatedEntityType: "AttendanceRecord", relatedEntityId: "a1" })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("You didn't check out"));
+
+      expect(router.push).toHaveBeenCalledWith("/attendance");
+    });
+
+    it("a visit closed without a check-out opens My visits", async () => {
+      notifications = [makeNotification({ type: "SITE_VISIT_AUTO_CLOSED", title: "You didn't check out of a site", relatedEntityType: "SiteVisit", relatedEntityId: "v1" })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("You didn't check out of a site"));
+
+      expect(router.push).toHaveBeenCalledWith("/my-visits");
+    });
+
     it("a manager's site check-in stays put: it's someone else's visit", async () => {
       notifications = [makeNotification({ type: "SITE_CHECKED_IN", title: "Site check-in", relatedEntityType: "SiteVisit", relatedEntityId: "v1" })];
       await renderWithProviders(<NotificationsScreen />);

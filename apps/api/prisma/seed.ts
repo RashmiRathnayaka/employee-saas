@@ -63,7 +63,12 @@ async function seedCompany(params: {
     // Create only, like every upsert here: running the seed again must never
     // overwrite what an admin has since chosen on the settings page.
     update: {},
-    create: { companyId: company.id, enabledModules },
+    create: {
+      companyId: company.id,
+      enabledModules,
+      // Day close only marks days that start after this.
+      attendanceEnabledAt: enabledModules.attendance ? new Date() : null,
+    },
   });
 
   const engineering = await findOrCreateDepartment(company.id, "Engineering");

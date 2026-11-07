@@ -43,6 +43,28 @@ export async function createNotification(client: NotificationClient, input: Crea
   });
 }
 
+/** For a job, which may run the same thing twice: a second notification with the same
+ * `dedupeKey` writes nothing, by ON CONFLICT DO NOTHING on the partial unique index. A
+ * failed insert would abort the caller's transaction, so this must not be a plain create. */
+export async function createNotificationOnce(
+  client: { notification: { createMany(args: { data: never[]; skipDuplicates: boolean }): Promise<unknown> } },
+  input: CreateNotificationInput & { dedupeKey: string },
+) {
+  // `never` for the same reason as the loose types above: extended clients' generics
+  // don't match, and this is the one place a row is built.
+  await client.notification.createMany({ data: [input as never], skipDuplicates: true });
+}
+
+/** Who to tell about an employee, if they can log in to see it. Looked up when sending,
+ * and never stored in a job's tables (architecture-phase2 §7). */
+export async function findLoginUserIdForEmployee(
+  client: { user: { findFirst(args: { where: Record<string, unknown>; select: { id: true } }): Promise<{ id: string } | null> } },
+  params: { companyId: string; employeeId: string },
+): Promise<string | null> {
+  const user = await client.user.findFirst({ where: { ...params, status: "ACTIVE" }, select: { id: true } });
+  return user?.id ?? null;
+}
+
 /** Active HR users of a company, minus `excludeUserId` (the requester - an
  * HR employee can't approve their own leave, so telling them it "awaits
  * your approval" would be wrong). */

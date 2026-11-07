@@ -6,6 +6,7 @@ import { writeAudit } from "../../lib/audit.js";
 import { createNotification, findActiveHrUserIds, leaveRangeText, notifyUsers, withNote } from "../../lib/notifications.js";
 import { isUniqueViolation } from "../../lib/prismaErrors.js";
 import { companyTodayAsUtcDate } from "../../lib/companyTime.js";
+import { syncAttendanceWithLeave } from "../attendance/attendanceHooks.js";
 import { findCurrentApproverUserIds, lockOrCreateBalance } from "./leaveRequests.service.js";
 
 type Tenant = ReturnType<typeof getTenantPrisma>;
@@ -14,6 +15,10 @@ const PENDING_STATUSES = new Set(["PENDING_MANAGER", "PENDING_HR"]);
 
 function balanceWhere(companyId: string, employeeId: string, leaveTypeId: string, year: number) {
   return { companyId_employeeId_leaveTypeId_year: { companyId, employeeId, leaveTypeId, year } };
+}
+
+function attendanceRange(leave: { companyId: string; employeeId: string; startDate: Date; endDate: Date }) {
+  return { companyId: leave.companyId, employeeId: leave.employeeId, startDate: leave.startDate, endDate: leave.endDate };
 }
 
 export async function decideLeaveRequest(params: {
@@ -116,6 +121,9 @@ export async function decideLeaveRequest(params: {
 
     const updated = await tx.leaveRequest.update({ where: { id: leaveRequest.id }, data: { status: newStatus } });
 
+    // Sick leave is usually filed after the fact, on a day already marked ABSENT.
+    if (newStatus === "APPROVED") await syncAttendanceWithLeave(tx, attendanceRange(leaveRequest));
+
     const range = leaveRangeText(leaveRequest.startDate, leaveRequest.endDate);
     const employeeName = `${leaveRequest.employee.firstName} ${leaveRequest.employee.lastName}`;
 
@@ -199,6 +207,7 @@ export async function cancelLeaveRequest(params: {
     });
 
     const updated = await tx.leaveRequest.update({ where: { id: leaveRequest.id }, data: { status: "CANCELLED" } });
+    await syncAttendanceWithLeave(tx, attendanceRange(leaveRequest));
 
     // The employee cancelled it themselves, so they don't need telling.
     // Whoever's queue it was in at that moment does - the same people
@@ -281,6 +290,7 @@ export async function revokeLeaveRequest(params: {
       where: { id: leaveRequest.id },
       data: { status: "REVOKED", revokedById: params.actorUserId, revokedAt: new Date(), revokeNote: params.note },
     });
+    await syncAttendanceWithLeave(tx, attendanceRange(leaveRequest));
 
     if (leaveRequest.employee.user) {
       await createNotification(tx, {

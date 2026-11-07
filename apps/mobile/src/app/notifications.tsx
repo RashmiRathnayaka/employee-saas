@@ -32,14 +32,14 @@ export default function NotificationsScreen() {
 
   /** Tap: mark read (if unread), then open what it's about. The navigation doesn't
    * wait for the PATCH, so a slow network never blocks it. The phone has no screen for
-   * one record or visit, so a correction opens the list it shows up in. A manager's
-   * SITE_CHECKED_IN isn't about their own visits, so it opens nothing. */
+   * one record or visit, so a correction or an auto-close opens the list it shows up in.
+   * A manager's SITE_CHECKED_IN isn't about their own visits, so it opens nothing. */
   function openNotification(n: NotificationDto) {
     if (n.readAt === null) markRead.mutate(n.id);
     const target = getNotificationTarget(n);
     if (target?.kind === "leaveRequest") router.push(`/leave/${target.id}`);
     if (target?.kind === "attendance") router.push("/attendance");
-    if (target?.kind === "siteVisit" && n.type === "ATTENDANCE_CORRECTED") router.push("/my-visits");
+    if (target?.kind === "siteVisit" && n.type !== "SITE_CHECKED_IN") router.push("/my-visits");
   }
 
   async function onRefresh() {
