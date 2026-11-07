@@ -65,6 +65,23 @@ tests never see leftover data from a previous test, dev data, or seed data -
 each test starts from a completely empty database and sets up whatever rows
 it needs.
 
+## The background worker
+
+`pnpm dev` also starts the worker (`apps/api/src/worker.ts`). Every 30 seconds it runs whatever is
+due, **against your dev database**:
+
+| Job | When (company time) | What it does |
+|---|---|---|
+| Day close | as each shift's close time passes | forgotten check-outs become `INCOMPLETE`, no-shows `ABSENT` |
+| Visit auto-close | 16 h after a site check-in | closes a forgotten site visit |
+| Check-in reminder | shift start + offset | "You haven't checked in yet" (Company settings switch) |
+| Proof reminders | daily reminder time | "due tomorrow" to the employee, "overdue" to HR, once each (switch) |
+| GPS purge | 03:00 | clears coordinates older than the retention days; never deletes rows |
+| Housekeeping | 04:00 UTC | deletes `job_runs` older than 30 days |
+
+Set `JOBS_ENABLED=false` in `apps/api/.env` to turn it off. `pnpm --filter @employee-saas/api worker --once`
+runs one tick and exits.
+
 Health check: `GET http://localhost:4000/api/v1/health` — returns `{ "status": "ok", "db": "ok", "timestamp": "..." }`
 if the API can reach Postgres.
 

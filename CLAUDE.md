@@ -102,7 +102,7 @@ _(Update this section as scripts are created.)_
 ```
 docker compose up -d     # start postgres, mailpit (file storage needs no container - see README)
 pnpm install
-pnpm dev                 # run api + web + background worker (the worker writes to the dev DB: day close, auto-close)
+pnpm dev                 # run api + web + background worker (the worker writes to the dev DB: day close, auto-close, reminders, GPS purge, housekeeping)
 pnpm test                # runs workspaces ONE AT A TIME (--workspace-concurrency=1) so API DB tests aren't starved of CPU; ~2.5 min
 pnpm typecheck
 pnpm lint

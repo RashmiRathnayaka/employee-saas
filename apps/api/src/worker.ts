@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { JOBS } from "./jobs.js";
+import { JOBS, PLATFORM_JOBS } from "./jobs.js";
 import { runTick, sanitiseError, TICK_INTERVAL_MS } from "./lib/jobs/runner.js";
 import { logger } from "./lib/logger.js";
 import { platformPrisma } from "./lib/prisma.js";
@@ -16,7 +16,7 @@ import { platformPrisma } from "./lib/prisma.js";
 
 async function tick(): Promise<void> {
   try {
-    await runTick(JOBS, new Date());
+    await runTick(JOBS, new Date(), PLATFORM_JOBS);
   } catch (err) {
     // A database outage, say. The loop carries on and the next tick tries again.
     logger.error({ lastError: sanitiseError(err) }, "Worker tick failed");
