@@ -88,7 +88,7 @@ const SHIFT_MAX_MINUTES = 16 * 60;
 
 export const SHIFT_LENGTH_MESSAGE = "A shift must be between 1 and 16 hours long";
 
-function minutesOfDay(time: string): number {
+export function minutesOfDay(time: string): number {
   const [hours, minutes] = time.split(":");
   return Number(hours) * 60 + Number(minutes);
 }

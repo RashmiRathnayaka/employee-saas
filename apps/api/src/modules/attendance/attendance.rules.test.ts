@@ -81,25 +81,43 @@ describe.each(TEST_TIMEZONES)("attendance rules with server TZ=$tz", ({ tz, offs
         expect(applyScheduleOverride(SETTINGS, null)).toBe(SETTINGS);
       });
 
-      it("a HALF day stays a full night shift when it starts after the half-day end", () => {
-        const night = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, NIGHT) });
-        expect(night.dayType).toBe("WORKING");
-        expect(night.endTime).toBe("06:00");
+      describe("a HALF day is the first half of the override's shift", () => {
+        it.each([
+          ["a night shift crossing midnight", "22:00", "06:00", "02:00"],
+          ["a day shift running past the company's half-day end", "11:00", "19:00", "15:00"],
+          ["a shift over before the half-day end", "06:00", "10:00", "08:00"],
+          ["a shift whose half ends before midnight", "18:00", "23:00", "20:30"],
+          ["a night shift whose half ends at midnight exactly", "20:00", "04:00", "00:00"],
+          ["an odd minute rounds down", "09:00", "18:01", "13:30"],
+        ])("%s: %s-%s ends at %s", (_label, startTime, endTime, halfEnd) => {
+          const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime, endTime }) });
+          expect(half).toMatchObject({ dayType: "HALF", startTime, endTime: halfEnd });
+        });
+
+        it("the night shift ends on the next date, in company time", () => {
+          const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, NIGHT) });
+          expect(half.scheduledStartAt).toEqual(new Date("2026-11-07T16:30:00.000Z"));
+          expect(half.scheduledEndAt).toEqual(new Date("2026-11-07T20:30:00.000Z")); // 02:00 on the 8th
+        });
+
+        it("a half ending at exactly midnight ends on the next date", () => {
+          const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "20:00", endTime: "04:00" }) });
+          expect(half.scheduledEndAt).toEqual(new Date("2026-11-07T18:30:00.000Z")); // 00:00 on the 8th
+        });
+
+        it("half a day's leave on it keeps the same times", () => {
+          const half = schedule({ workDate: SATURDAY, leave: "HALF", settings: applyScheduleOverride(SETTINGS, NIGHT) });
+          expect(half).toMatchObject({ dayType: "HALF", isHalfDayLeave: true, endTime: "02:00" });
+        });
+
+        it("a FULL day keeps the whole shift", () => {
+          expect(schedule({ settings: applyScheduleOverride(SETTINGS, NIGHT) })).toMatchObject({ dayType: "WORKING", endTime: "06:00" });
+        });
       });
 
-      it("a HALF day ends at the half-day end when the shift would run past it", () => {
-        const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "08:00", endTime: "16:00" }) });
-        expect(half).toMatchObject({ dayType: "HALF", endTime: "13:00" });
-      });
-
-      it("a HALF day doesn't make a short early shift longer", () => {
-        const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "06:00", endTime: "10:00" }) });
-        expect(half).toMatchObject({ dayType: "HALF", startTime: "06:00", endTime: "10:00" });
-      });
-
-      it("a HALF day cuts a shift that crosses midnight at the half-day end", () => {
-        const half = schedule({ workDate: SATURDAY, settings: applyScheduleOverride(SETTINGS, { ...NIGHT, startTime: "12:00", endTime: "02:00" }) });
-        expect(half).toMatchObject({ dayType: "HALF", endTime: "13:00" });
+      it("the same hours as company hours keep using the half-day end time", () => {
+        const company = { ...SETTINGS, workStartTime: "11:00", workEndTime: "19:00" };
+        expect(schedule({ workDate: SATURDAY, settings: company })).toMatchObject({ dayType: "HALF", endTime: "13:00" });
       });
     });
 

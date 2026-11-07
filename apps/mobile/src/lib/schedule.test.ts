@@ -37,6 +37,12 @@ describe("scheduleDayText", () => {
     expect(scheduleDayText(day({ isHalfDayLeave: true }), TIMEZONE)).toBe(`09:00 - 17:00 · ${strings.schedule.halfDayLeave}`);
   });
 
+  it("an override's half night shows its first half, ending the next day", () => {
+    const halfNight = day({ date: "2026-11-07", dayType: "HALF", scheduledStartAt: "2026-11-07T16:30:00.000Z", scheduledEndAt: "2026-11-07T20:30:00.000Z" });
+    expect(scheduleDayText(halfNight, TIMEZONE)).toBe(`22:00 - 02:00 (${strings.schedule.nextDay}) · ${strings.schedule.halfDay}`);
+    expect(scheduleDayText({ ...halfNight, isHalfDayLeave: true }, TIMEZONE)).toBe(`22:00 - 02:00 (${strings.schedule.nextDay}) · ${strings.schedule.halfDayLeave}`);
+  });
+
   it.each([
     ["OFF", strings.schedule.dayOff],
     ["HOLIDAY", strings.schedule.holiday],

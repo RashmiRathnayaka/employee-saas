@@ -94,6 +94,13 @@ function setOverride(company: Company, person: Person, values: { startTime: stri
 }
 const auditsOf = (company: Company, action: string) => platformPrisma.auditLog.findMany({ where: { companyId: company.id, action } });
 
+async function approveLeave(company: Company, person: Person, date: string, endHalfDay: boolean) {
+  const leaveType = await platformPrisma.leaveType.findFirstOrThrow({ where: { companyId: company.id } });
+  return platformPrisma.leaveRequest.create({
+    data: { companyId: company.id, employeeId: person.employeeId, leaveTypeId: leaveType.id, startDate: new Date(date), endDate: new Date(date), endHalfDay, totalDays: 0.5, status: "APPROVED" },
+  });
+}
+
 describe("schedules module", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -406,6 +413,45 @@ describe("schedules module", () => {
       });
     });
 
+    describe("a half day on an override", () => {
+      const dayIn = (body: { days: { date: string }[] }, date: string) => body.days.find((d) => d.date === date);
+
+      it("a night shift's Saturday is its first half, crossing midnight, and Friday stays whole", async () => {
+        const { company, alex } = await setUp();
+        await setOverride(company, alex, NIGHT);
+
+        const { body } = await getMine(await at(alex, TUESDAY_MORNING));
+
+        expect(dayIn(body, "2026-11-06")).toMatchObject({ dayType: "WORKING", scheduledEndAt: colombo("07", "06:00:00").toISOString() });
+        expect(dayIn(body, "2026-11-07")).toMatchObject({
+          dayType: "HALF",
+          scheduledStartAt: colombo("07", "22:00:00").toISOString(),
+          scheduledEndAt: colombo("08", "02:00:00").toISOString(),
+        });
+      });
+
+      it("a day shift's half doesn't use the company's half-day end", async () => {
+        const { company, alex } = await setUp();
+        await setOverride(company, alex, { startTime: "11:00", endTime: "19:00" });
+
+        const { body } = await getMine(await at(alex, TUESDAY_MORNING));
+
+        expect(dayIn(body, "2026-11-07")).toMatchObject({ dayType: "HALF", scheduledEndAt: colombo("07", "15:00:00").toISOString() });
+      });
+
+      it("half a day's leave shows the same times, and full leave none of them", async () => {
+        const { company, alex } = await setUp();
+        await setOverride(company, alex, NIGHT);
+        await approveLeave(company, alex, "2026-11-07", true);
+        await approveLeave(company, alex, "2026-11-14", false);
+
+        const { body } = await getMine(await at(alex, TUESDAY_MORNING));
+
+        expect(dayIn(body, "2026-11-07")).toMatchObject({ dayType: "HALF", isHalfDayLeave: true, scheduledEndAt: colombo("08", "02:00:00").toISOString() });
+        expect(dayIn(body, "2026-11-14")).toMatchObject({ dayType: "ON_LEAVE", isHalfDayLeave: false });
+      });
+    });
+
     it("another employee's override doesn't touch mine", async () => {
       const { company, alex, sam } = await setUp();
       await setOverride(company, sam, NIGHT);
@@ -489,13 +535,65 @@ describe("schedules module", () => {
         expect(outRes.body.record).toMatchObject({ id: inRes.body.record.id, workedMinutes: 520, earlyLeaveMinutes: 0 });
       });
 
-      it("a Saturday night stays a full shift, not the company's half day", async () => {
-        const { company, alex } = await setUp();
-        await setOverride(company, alex, NIGHT);
+      describe("on a half-day Saturday, 22:00-02:00", () => {
+        it.each([
+          ["leaving before 02:00 is early", "01:00:00", 60, 180],
+          ["leaving after 02:00 isn't", "02:10:00", 0, 250],
+        ])("%s", async (_label, time, earlyLeaveMinutes, workedMinutes) => {
+          const { company, alex } = await setUp();
+          await setOverride(company, alex, NIGHT);
 
-        const res = await checkIn(await at(alex, colombo("07", "22:00:00")));
+          const inRes = await checkIn(await at(alex, colombo("07", "22:00:00")));
+          const outRes = await checkOut(await at(alex, colombo("08", time)));
 
-        expect(res.body.record.scheduledEndAt).toBe(colombo("08", "06:00:00").toISOString());
+          expect(inRes.body.record).toMatchObject({ workDate: "2026-11-07", status: "PRESENT", scheduledEndAt: colombo("08", "02:00:00").toISOString() });
+          expect(outRes.body.record).toMatchObject({ id: inRes.body.record.id, earlyLeaveMinutes, workedMinutes });
+        });
+
+        it("a check-in after midnight is Saturday's, and late from 22:00", async () => {
+          const { company, alex } = await setUp();
+          await setOverride(company, alex, NIGHT);
+
+          const res = await checkIn(await at(alex, colombo("08", "00:20:00")));
+
+          expect(res.body.record).toMatchObject({ workDate: "2026-11-07", status: "LATE", lateMinutes: 140 });
+        });
+
+        it("a check-in once it has ended belongs to Sunday, not to the night before", async () => {
+          const { company, alex } = await setUp();
+          await setOverride(company, alex, NIGHT);
+
+          const res = await checkIn(await at(alex, colombo("08", "02:30:00")));
+
+          expect(res.body.record).toMatchObject({ workDate: "2026-11-08", status: "PRESENT", lateMinutes: 0 });
+          expect(res.body.record.flags).toContain("NON_WORKING_DAY");
+        });
+
+        it("the record closes counting from 02:00, not 06:00", async () => {
+          const { company, alex } = await setUp();
+          await setOverride(company, alex, NIGHT);
+          const { autoCheckoutAfterMinutes } = await platformPrisma.companySettings.findUniqueOrThrow({ where: { companyId: company.id } });
+          const closesAt = colombo("08", "02:00:00").getTime() + autoCheckoutAfterMinutes * 60_000;
+          const today = (token: string) => request(app).get("/api/v1/attendance/me/today").set("Authorization", token);
+
+          await checkIn(await at(alex, colombo("07", "22:00:00")));
+
+          expect((await today(await at(alex, new Date(closesAt - 60_000)))).body.nextAction).toBe("CHECK_OUT");
+          expect((await today(await at(alex, new Date(closesAt)))).body.nextAction).not.toBe("CHECK_OUT");
+        });
+
+        it("half a day's leave: never late or early, against the same 02:00 end", async () => {
+          const { company, alex } = await setUp();
+          await setOverride(company, alex, NIGHT);
+          await approveLeave(company, alex, "2026-11-07", true);
+
+          const inRes = await checkIn(await at(alex, colombo("07", "23:00:00")));
+          const outRes = await checkOut(await at(alex, colombo("08", "00:30:00")));
+
+          expect(inRes.body.record).toMatchObject({ workDate: "2026-11-07", status: "PRESENT", lateMinutes: 0, scheduledEndAt: colombo("08", "02:00:00").toISOString() });
+          expect(inRes.body.record.flags).toContain("HALF_DAY_LEAVE");
+          expect(outRes.body.record.earlyLeaveMinutes).toBe(0);
+        });
       });
     });
 

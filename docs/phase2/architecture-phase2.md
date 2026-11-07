@@ -80,10 +80,15 @@ answers "what were they supposed to work?":
    (`workStartTime`, `workEndTime`, `lateGraceMinutes`, `workingDays`).
 2. Day weight from `workingDays[weekday]`:
    - `OFF` → non-working day.
-   - `HALF` → end time is `halfDayEndTime`. For an override whose start is
-     after `halfDayEndTime`, a `HALF` day is treated as `FULL`. A shift that already
-     ends before `halfDayEndTime` (an override like 06:00-10:00) keeps its own end, so
-     a half day can't make it longer (settled in step 2.6).
+   - `HALF` on an **override** → the first half of the override's own shift:
+     22:00-06:00 becomes 22:00-02:00, and 11:00-19:00 becomes 11:00-15:00. An odd minute
+     rounds down. `halfDayEndTime` isn't used. Lateness, early leaving and the close time
+     all follow from this end, and the day-close job (step 2.7) must take its schedule
+     from this same function, not work one out itself.
+   - `HALF` on **company hours** → end time is `halfDayEndTime`. If they start at or after
+     it, the day is worked in full. If they already end before it, they keep their own end.
+   - Half-day leave doesn't change the times: it's flagged, and not judged late or early.
+   - Leave balances still count days from the company's `workingDays`, not an override's.
 3. `company_holidays` on that date → non-working day.
 4. Approved leave covering that date:
    - full day → "on leave";

@@ -259,7 +259,7 @@ erDiagram
 |---|---|---|---|
 | `workStartTime` | `text` `CHECK ~ '^([01]\d\|2[0-3]):[0-5]\d$'` | `'09:00'` | Company default schedule start (local wall time) |
 | `workEndTime` | same | `'17:00'` | Default end. Earlier than start means the shift crosses midnight |
-| `halfDayEndTime` | same | `'13:00'` | End time on days marked `HALF` in `workingDays` (e.g. Saturday) |
+| `halfDayEndTime` | same | `'13:00'` | End time on days marked `HALF` in `workingDays` (e.g. Saturday), on company hours. An override's `HALF` day is the first half of its own shift instead. |
 | `lateGraceMinutes` | `int CHECK 0..240` | `10` | Check-in later than start + grace = `LATE` |
 | `autoCheckoutAfterMinutes` | `int CHECK 30..720` | `240` | The day is closed this long after the scheduled end (auto check-out → `INCOMPLETE`, absent marking) |
 | `checkinReminderEnabled` | `boolean` | `true` | |

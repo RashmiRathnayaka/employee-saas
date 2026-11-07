@@ -413,7 +413,7 @@ All 24 were resolved by the developer on 2026-11-03.
 | Q8 | Half-day leave | Skip lateness on half-day leave days; no check-in that day = `ON_LEAVE` (flag `HALF_DAY_LEAVE`). Morning/afternoon is not recorded (a possible future leave change). | Accepted |
 | Q9 | Check-in on approved leave | Allowed, flagged `ON_APPROVED_LEAVE`; the leave isn't cancelled, and HR isn't notified (the flag shows in the daily report). | Accepted |
 | Q10 | Early leave / overtime | Early leave is recorded in minutes, not as a status. No overtime in Phase 2. | Accepted |
-| Q11 | Half-day end | `HALF` days end at `halfDayEndTime`, default 13:00. | Accepted |
+| Q11 | Half-day end | On company hours, `HALF` days end at `halfDayEndTime`, default 13:00. On a per-employee override, a `HALF` day is the first half of the override's shift (decided after step 2.6). | Accepted |
 | Q12 | Night shifts | Supported via per-employee overrides that cross midnight. No rotating rosters. | Accepted |
 | Q13 | Prisma back-relations | **Approved.** Back-relation fields on `User` and `Company` are fine because they generate no SQL. The migration rule is in the schema doc, "Migrations: Prisma back-relations and the freeze". | Your answer |
 | Q14 | iOS | Android only in Phase 2. | Accepted |

@@ -1,4 +1,4 @@
-import { getShiftInstants, type AttendanceFlag, type AttendanceNextAction, type ScheduleDayType } from "@employee-saas/shared";
+import { getShiftInstants, minutesOfDay, type AttendanceFlag, type AttendanceNextAction, type ScheduleDayType } from "@employee-saas/shared";
 import { getWorkDayWeight, type WorkingDaysConfig } from "../../lib/leaveDays.js";
 
 /**
@@ -9,6 +9,7 @@ import { getWorkDayWeight, type WorkingDaysConfig } from "../../lib/leaveDays.js
 
 const ONE_MINUTE_MS = 60_000;
 const LONG_SHIFT_MINUTES = 16 * 60;
+const MINUTES_IN_A_DAY = 24 * 60;
 
 export type EffectiveSchedule = {
   dayType: ScheduleDayType;
@@ -27,6 +28,8 @@ export type ScheduleSettings = {
   workEndTime: string;
   halfDayEndTime: string;
   lateGraceMinutes: number;
+  /** These hours are a per-employee override, so its HALF days are half of its own shift. */
+  isOverride?: boolean;
 };
 
 export type ScheduleOverride = {
@@ -48,7 +51,35 @@ export function applyScheduleOverride(settings: ScheduleSettings, override: Sche
     workEndTime: override.endTime,
     workingDays: override.workingDays ?? settings.workingDays,
     lateGraceMinutes: override.lateGraceMinutes ?? settings.lateGraceMinutes,
+    isOverride: true,
   };
+}
+
+/** When the first half of a shift ends: 22:00-06:00 gives 02:00. An odd minute rounds
+ * down, and an end at or before the start is the next day, as in `getShiftInstants`. */
+function getFirstHalfEndTime(startTime: string, endTime: string): string {
+  const start = minutesOfDay(startTime);
+  const length = ((minutesOfDay(endTime) - start + MINUTES_IN_A_DAY - 1) % MINUTES_IN_A_DAY) + 1;
+  const end = (start + Math.floor(length / 2)) % MINUTES_IN_A_DAY;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
+}
+
+/** Where a shift ends on this day, and whether a HALF day actually shortens it (§1.2). */
+function getShiftEnd(settings: ScheduleSettings, weight: "FULL" | "HALF"): { isHalfDay: boolean; endTime: string } {
+  const { workStartTime: startTime, workEndTime, halfDayEndTime } = settings;
+  if (settings.isOverride) {
+    return weight === "HALF"
+      ? { isHalfDay: true, endTime: getFirstHalfEndTime(startTime, workEndTime) }
+      : { isHalfDay: false, endTime: workEndTime };
+  }
+  // Company hours starting after the half-day end have no morning to shorten, so their
+  // half days are worked in full. At exactly the half-day end, using it as the end time
+  // would mean "the same time tomorrow".
+  const isHalfDay = weight === "HALF" && startTime < halfDayEndTime;
+  // A shift that's already over by the half-day end isn't made longer by it.
+  const endsBeforeHalfDayEnd = workEndTime > startTime && workEndTime < halfDayEndTime;
+  return { isHalfDay, endTime: isHalfDay && !endsBeforeHalfDayEnd ? halfDayEndTime : workEndTime };
 }
 
 /** What approved leave means for one date, given a leave covering it. */
@@ -84,14 +115,7 @@ export function resolveEffectiveSchedule(params: {
   }
 
   const startTime = settings.workStartTime;
-  // A shift starting after the half-day end has no morning to shorten, so its
-  // half days are worked in full. At exactly the half-day end, using it as the end
-  // time would mean "the same time tomorrow".
-  const isHalfDay = weight === "HALF" && startTime < settings.halfDayEndTime;
-  // A shift that's already over by the half-day end isn't made longer by it, which an
-  // override like 06:00-10:00 would otherwise be.
-  const endsBeforeHalfDayEnd = settings.workEndTime > startTime && settings.workEndTime < settings.halfDayEndTime;
-  const endTime = isHalfDay && !endsBeforeHalfDayEnd ? settings.halfDayEndTime : settings.workEndTime;
+  const { isHalfDay, endTime } = getShiftEnd(settings, weight);
 
   return {
     dayType: leave === "FULL" ? "ON_LEAVE" : isHalfDay ? "HALF" : "WORKING",
