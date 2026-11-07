@@ -30,7 +30,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
-| GET | `/company/settings` | any | Now also returns the work schedule defaults (`workStartTime`, `workEndTime`, `halfDayEndTime`, `lateGraceMinutes`, `autoCheckoutAfterMinutes`), reminder settings and GPS settings (`gpsMaxAccuracyMeters`, `gpsRetentionDays`). `enabledModules` now has `attendance`, `sites` and `tasks`. |
+| GET | `/company/settings` | any | Now also returns the work schedule defaults (`workStartTime`, `workEndTime`, `halfDayEndTime`, `lateGraceMinutes`, `autoCheckoutAfterMinutes`), reminder settings and GPS settings (`gpsMaxAccuracyMeters`, `gpsRetentionDays`). `enabledModules` now has `attendance`, `sites` and `tasks`. Also `attendanceEnabledAt` (read-only; set when attendance is switched on). |
 | PATCH | `/company/settings` | COMPANY_ADMIN | Accepts the new fields (validated `HH:mm`, ranges as in the schema doc). `enabledModules` accepts only `attendance`, `sites` and `tasks`, and is merged into the stored value. `gpsRadiusMeters` must be 25–5000. The shift from `workStartTime` to `workEndTime` must be 1–16 hours, including across midnight; if a PATCH sends only one of them, it's checked against the stored other one (**400** `VALIDATION_ERROR` on the field). Audited as `COMPANY_SETTINGS_UPDATED`, with the before and after values of the fields that changed. |
 
 ## Schedules (module `attendance`)
@@ -142,7 +142,8 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 
 ## Health (extended)
 - `GET /health` adds `worker: { lastTickAt, ok }`. `ok` is true when the
-  last tick was under 2 minutes ago.
+  last tick was under 2 minutes ago. `lastTickAt` is null if no worker has ever run. It still
+  answers 200 with the worker down.
 - No job data is exposed.
 
 ## Error codes added in Phase 2

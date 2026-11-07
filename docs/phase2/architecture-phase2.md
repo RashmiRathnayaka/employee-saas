@@ -4,8 +4,8 @@
 developer on 2026-11-03 (see `plan.md` → "Resolved questions").**
 Implemented so far: step 2.1 (module gating, settings, shared helpers), step
 2.2 (sites), step 2.3 (office attendance), step 2.4 (GPS verification and the
-privacy disclosure), step 2.5 (site visits) and step 2.6 (HR views, corrections and
-schedule overrides).
+privacy disclosure), step 2.5 (site visits), step 2.6 (HR views, corrections and
+schedule overrides) and step 2.7 (the job runner and day close).
 
 This adds to `docs/architecture.md`. Everything in it still holds: tenant
 scope from the token only, `getTenantPrisma`, audit in the same transaction,
@@ -258,9 +258,13 @@ This section was decided in Q2.
   one, or until step 2.7, can't), the visit is recorded and flagged `AFTER_HOURS`, with
   no `attendanceRecordId`, and no row is created (settled in step 2.5). An office
   check-in at that moment would be refused (§1.3), so a visit can't start the day
-  either (confirmed by the developer, 2026-11-06). Its `workDate` is still set, and step
-  2.7 links it if it writes `ABSENT`. If HR creates that day's record first, the create
+  either (confirmed by the developer, 2026-11-06). Its `workDate` is still set. When day
+  close writes that date's row it links the visit: on `ABSENT` the flag becomes
+  `ON_ABSENT_DAY`, and on `ON_LEAVE` or `HOLIDAY` it stays `AFTER_HOURS`, the same as a
+  visit made after the row existed. If HR creates that day's record first, the create
   links it (step 2.6), keeping the flag.
+- **If a row later becomes `ABSENT`** (leave revoked, holiday deleted), a linked `AFTER_HOURS`
+  visit becomes `ON_ABSENT_DAY`, so HR sees it.
 - **The app asks "Check in at <site>?" before a site check-in** (decided by the developer,
   2026-11-06), because it notifies the manager, can record the location and can start the
   day. On a first use, the location disclosure comes after that answer.
@@ -740,14 +744,19 @@ can revisit pg-boss then.
   interface Job {
     name: string;                          // "attendance.dayClose"
     module?: "attendance" | "sites" | "tasks";
-    dueRunKeys(company, now): string[];    // e.g. ["2026-11-03"] once 09:00 local has passed today
-    run(tenant, company, runKey, now): Promise<void>;  // must be idempotent
+    everyTick?(context): Promise<void>;    // cheap and idempotent, no claim
+    dueRunKeys?(context): Promise<string[]>;  // e.g. ["2026-11-03"] once 09:00 local has passed today
+    run?(context, runKey): Promise<void>;  // must be idempotent
   }
+  // context = { tenant, company, settings, now }
   ```
 - `now` is always passed in, never read from the clock inside a job, so
   Vitest can run "the day at 23:59 in Colombo" deterministically.
-- `/health` gains `worker: { lastTickAt }` (read from the latest
-  `job_runs`), so you can see if the worker is down.
+- `/health` gains `worker: { lastTickAt, ok }`, so you can see if the worker is down. `ok`
+  means the last tick was under 2 minutes ago. Most ticks claim nothing, so every tick
+  moves one heartbeat row in `job_runs` (`worker.tick`) instead of adding a row. A worker
+  being down doesn't fail the check: the API itself is fine.
+- `pnpm --filter @employee-saas/api worker --once` runs one tick and exits.
 
 ### 5.3 Safe with two (or more) instances
 There are three layers, and each one alone prevents duplicates of its kind:
@@ -806,6 +815,38 @@ pass is cheap and idempotent:
 - The `job_runs` claim per company per workDate marks the date as
   **finished** once every employee's close time has passed, so later ticks
   stop scanning it.
+
+**Details settled in step 2.7** (`apps/api/src/modules/attendance/dayClose.job.ts`):
+- **Three separate passes.** Forgotten records, by each record's close time and whatever its
+  date, every tick. No-shows, per date, per employee. Forgotten visits, every tick. The first
+  two are under the `attendance` module, the third under `sites`.
+- **The schedule** comes from `resolveEffectiveSchedule` with the override applied, the same as a
+  check-in, so an override's night shift or half day closes when that shift does. The company's
+  and each override's hours decide when a date is finished.
+- **Precedence:** a holiday beats leave, as in §1.2, since a leave doesn't spend a day on a
+  holiday. Half-day leave counts as `ON_LEAVE` with `HALF_DAY_LEAVE` (Q8).
+- **A holiday on a weekly off day writes no row:** it's still an off day (§1.4).
+- **`HOLIDAY` rows are written at local midnight,** when the date has moved on, and not at a
+  close time. A holiday has no shift end, and anyone may check in during it (§1.5). A row earlier
+  would refuse them (§1.3).
+- **A no-show only counts if attendance was on when that day started**
+  (`company_settings.attendanceEnabledAt`, set when the module is switched on). Without this, the
+  catch-up would mark everyone `ABSENT` for days when nobody could check in. If it's null, nothing
+  is marked. Auto-close doesn't check it, since a record is real whenever it was made.
+- **A forgotten visit** closes 16 hours after its check-in, like a check-in with no schedule, and the
+  employee gets `SITE_VISIT_AUTO_CLOSED`. It keeps no check-out, as `AUTO_CLOSED` means.
+- **Closing a record closes only the visits linked to it.** After a worker outage, closing yesterday's
+  record mustn't end the visit someone is on today. With `sites` off, a linked visit still closes,
+  since nothing else could close it.
+- **Hooks decide from the facts.** After a leave or holiday changes, each no-check-in row in the range
+  is set from today's holidays and approved leave, rather than flipped one way, so it's safe to
+  repeat. A row with a check-in keeps its times and status. It only gains or loses `ON_APPROVED_LEAVE`
+  or `HALF_DAY_LEAVE`, unless it's on a day off. A row becoming `HOLIDAY` loses its schedule snapshot,
+  so a later HR correction isn't judged against a shift that wasn't on. Hooks ignore the module
+  switch: past rows should be right either way.
+- **Deactivation** closes every open record and visit at once with the same code, sends no notification
+  (the login is being deactivated too, and "ask HR" wouldn't make sense), and records the counts in
+  the `EMPLOYEE_DEACTIVATED` audit row.
 
 **Proof reminders and HR's notes.** The Phase 1 flow for `INFO_REQUIRED`
 keeps the same `proofDueAt`: "info required" doesn't give a fresh

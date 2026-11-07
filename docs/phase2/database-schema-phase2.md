@@ -9,7 +9,8 @@ the new `company_settings` columns and `notifications.dedupeKey`. Step 2.2,
 no migration: it fills GPS columns that already exist. Step 2.5,
 `20261106180000_phase2_site_visits`: the `site_visits` table. Step 2.6,
 `20261106210000_phase2_schedules_corrections`: `employee_schedules` and
-`attendance_corrections`. The other new tables aren't migrated yet.
+`attendance_corrections`. Step 2.7, `20261107090000_phase2_job_runs`: `job_runs` and
+`company_settings.attendanceEnabledAt`. The other new tables aren't migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
@@ -480,11 +481,23 @@ An append-only history of HR changes. Rows are never updated or deleted.
     `INSERT … ON CONFLICT DO NOTHING` succeeds owns the run (architecture
     §5).
 - Index `(status, startedAt)` to find stuck runs.
-- Purged after 30 days.
+- Purged after 30 days (step 2.8), except its heartbeat row (`worker.tick`), which is updated rather
+  than added to.
+- `companyId` uses `ON DELETE RESTRICT`, stated in `schema.prisma`.
 - **Not** in `TENANT_MODELS`. Like `refresh_tokens`, it's infrastructure:
   it holds no tenant business data, only a `companyId` reference. Only the
   job runner touches it, through the platform client. The job's actual
   work then runs through `getTenantPrisma(companyId)` like any request.
+
+---
+
+### `company_settings.attendanceEnabledAt`
+- `timestamp NULL`: when the `attendance` module was last switched on. Saving settings sets it on a
+  switch from off to on, and nothing else moves it.
+- Day close doesn't mark a day that started before it, and marks nothing if it's null
+  (architecture §5.4).
+- The migration sets it to today's UTC midnight for companies with attendance already on, so a first
+  day close doesn't mark the days before the worker existed. The seed sets it when it creates a company.
 
 ---
 
@@ -497,10 +510,15 @@ An append-only history of HR changes. Rows are never updated or deleted.
   rows with no check-in go back to `ABSENT`. Rows with a check-in only
   lose the `ON_APPROVED_LEAVE` flag.
 - **Holiday added for a past date**: `ABSENT` rows on that date become
-  `HOLIDAY`. A holiday deleted for a past date flips them back.
-- **Employee deactivated**: open site visits and attendance are closed
-  (`AUTO_CLOSED`, with reason in `flags`), and open tasks stay as they are,
-  for HR to reassign.
+  `HOLIDAY`, and `ON_LEAVE` rows too, as in day close (a holiday beats leave). A holiday
+  deleted for a past date flips them back.
+- **Employee deactivated**: open attendance records become `INCOMPLETE` with the flag
+  `AUTO_CLOSED`, open site visits get the status `AUTO_CLOSED`, and open tasks stay as they
+  are, for HR to reassign.
+
+Revoking only applies to leave that hasn't started, and cancelling only to leave that's pending, so
+today neither normally finds a row to change. The hooks are there so that a past row stays right if
+those rules loosen. Architecture §5.4 has the details.
 
 ---
 

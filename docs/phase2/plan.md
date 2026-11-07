@@ -3,7 +3,8 @@
 **Status: approved. All open questions were resolved by the developer on
 2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 to 2.5 are
 implemented and tested on a device (`docs/reports/step-2.1.md` to `step-2.5.md`). Step 2.6
-is implemented and awaiting its checklist (`docs/reports/step-2.6.md`).
+is tested on a device too (`docs/reports/step-2.6.md`). Step 2.7 is implemented and awaiting
+its checklist (`docs/reports/step-2.7.md`).
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -251,6 +252,13 @@ and the riskiest unknowns come early:
     `ON_ABSENT_DAY`, or HR's daily report won't show the contradiction.
 - `/health` worker status.
 - Fake-clock tests for Colombo and a night shift, and a two-workers test.
+
+**Added during this step, because the plan as written would have got these wrong:**
+- **When attendance was switched on** (`company_settings.attendanceEnabledAt`). The 48-hour catch-up
+  would otherwise mark everyone `ABSENT` for days when nobody could check in, including on the first
+  run against an existing database.
+- **`HOLIDAY` rows wait for local midnight.** A holiday has no shift end, and a row at any earlier
+  time would refuse someone coming in to work it.
 
 **Try it:**
 1. Set the company's auto-checkout to 30 min and your schedule end to now

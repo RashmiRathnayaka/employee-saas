@@ -102,7 +102,7 @@ _(Update this section as scripts are created.)_
 ```
 docker compose up -d     # start postgres, mailpit (file storage needs no container - see README)
 pnpm install
-pnpm dev                 # run api + web
+pnpm dev                 # run api + web + background worker (the worker writes to the dev DB: day close, auto-close)
 pnpm test                # runs workspaces ONE AT A TIME (--workspace-concurrency=1) so API DB tests aren't starved of CPU; ~2.5 min
 pnpm typecheck
 pnpm lint
@@ -110,6 +110,10 @@ pnpm db:migrate
 pnpm db:seed
 pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the test DB (also runs automatically before `pnpm test`)
 pnpm --filter @employee-saas/shared test           # shared helpers (date tests run under TZ=Asia/Colombo and TZ=UTC)
+pnpm --filter @employee-saas/api worker            # the background worker alone (add --once for one tick and exit)
+node scripts/browser-check.mjs start --reset --seed   # real-browser check: temp API on 4001 + temp Vite on 5199, on the TEST DB
+node scripts/browser-check.mjs run scripts/browser-checks/smoke.mjs   # run a check (Playwright, with a login helper)
+node scripts/browser-check.mjs stop                # stops only what's on 4001 and 5199, never 4000 or 5173 (usage: header of the script)
 ```
 
 ## Status

@@ -43,7 +43,7 @@ pnpm db:seed
 ## Running
 
 ```bash
-pnpm dev        # runs the API (http://localhost:4000) and the web app (http://localhost:5173)
+pnpm dev        # runs the API (http://localhost:4000), the web app (http://localhost:5173) and the background worker
 pnpm test       # runs all workspace test suites (apps/api needs docker compose up first)
 pnpm typecheck  # tsc --noEmit across all workspaces
 pnpm lint       # eslint across all workspaces
