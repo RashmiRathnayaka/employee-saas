@@ -33,9 +33,11 @@ export default function NotificationsScreen() {
   /** Tap: mark read (if unread), then open what it's about. The navigation doesn't
    * wait for the PATCH, so a slow network never blocks it. The phone has no screen for
    * one record or visit, so a correction or an auto-close opens the list it shows up in.
-   * A manager's SITE_CHECKED_IN isn't about their own visits, so it opens nothing. */
+   * A manager's SITE_CHECKED_IN isn't about their own visits, so it opens nothing. A
+   * check-in reminder has no record to point at yet, but the tab is where you check in. */
   function openNotification(n: NotificationDto) {
     if (n.readAt === null) markRead.mutate(n.id);
+    if (n.type === "CHECKIN_REMINDER") return router.push("/attendance");
     const target = getNotificationTarget(n);
     if (target?.kind === "leaveRequest") router.push(`/leave/${target.id}`);
     if (target?.kind === "attendance") router.push("/attendance");

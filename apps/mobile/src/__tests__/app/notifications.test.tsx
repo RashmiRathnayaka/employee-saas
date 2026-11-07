@@ -200,6 +200,24 @@ describe("NotificationsScreen", () => {
       expect(router.push).toHaveBeenCalledWith("/attendance");
     });
 
+    it("a check-in reminder opens the Attendance tab, though it points at no record", async () => {
+      notifications = [makeNotification({ type: "CHECKIN_REMINDER", title: "You haven't checked in yet", relatedEntityType: null, relatedEntityId: null })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("You haven't checked in yet"));
+
+      expect(router.push).toHaveBeenCalledWith("/attendance");
+    });
+
+    it("a proof reminder opens its leave request", async () => {
+      notifications = [makeNotification({ type: "LEAVE_PROOF_DUE_SOON", title: "Leave proof due tomorrow", relatedEntityType: "LeaveRequest", relatedEntityId: "l1" })];
+      await renderWithProviders(<NotificationsScreen />);
+
+      await fireEvent.press(await screen.findByText("Leave proof due tomorrow"));
+
+      expect(router.push).toHaveBeenCalledWith("/leave/l1");
+    });
+
     it("a visit closed without a check-out opens My visits", async () => {
       notifications = [makeNotification({ type: "SITE_VISIT_AUTO_CLOSED", title: "You didn't check out of a site", relatedEntityType: "SiteVisit", relatedEntityId: "v1" })];
       await renderWithProviders(<NotificationsScreen />);

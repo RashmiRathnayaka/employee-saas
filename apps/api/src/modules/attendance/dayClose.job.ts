@@ -33,7 +33,7 @@ const ONE_MINUTE_MS = 60_000;
 const CLOSE_BATCH_SIZE = 500;
 
 /** The company's hours, and each employee's override applied to them. */
-async function getScheduleSettings(context: JobContext) {
+export async function getScheduleSettings(context: JobContext) {
   const { tenant, company, settings } = context;
   const overrides = await tenant.employeeSchedule.findMany({ where: { companyId: company.id } });
   const companyHours: ScheduleSettings = { ...settings, workingDays: normalizeWorkingDays(settings.workingDays) };
