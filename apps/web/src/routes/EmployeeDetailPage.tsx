@@ -181,7 +181,7 @@ export function EmployeeDetailPage() {
       </Card>
 
       {/* A manager reads their team's. Their own isn't reachable by id: it's /schedule/me. */}
-      {canManage || (user?.role === "MANAGER" && !isSelf) ? <EmployeeScheduleCard employeeId={employee.id} canEdit={canManage} /> : null}
+      {canManage || (user?.role === "MANAGER" && !isSelf) ? <EmployeeScheduleCard employeeId={employee.id} canEdit={canManage && !isSelf} /> : null}
 
       <Card>
         <CardHeader>

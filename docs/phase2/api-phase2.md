@@ -39,8 +39,8 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 |---|---|---|---|
 | GET | `/schedule/me` | any employee | My effective schedule: start/end, grace and source (`COMPANY` / `OVERRIDE`), plus the next 14 days with each day's type (`WORKING` / `HALF` / `OFF` / `HOLIDAY` / `ON_LEAVE`) and scheduled times |
 | GET | `/employees/:id/schedule` | COMPANY_ADMIN, HR, MANAGER (own team) | `{ schedule, override }`: the effective schedule, and the override or null |
-| PUT | `/employees/:id/schedule` | COMPANY_ADMIN, HR | Set or replace the override `{ startTime, endTime, workingDays?, lateGraceMinutes? }`. A field left out, or null, follows the company again. `workingDays` needs all seven days. Audited as `SCHEDULE_UPDATED`, unless nothing changed. |
-| DELETE | `/employees/:id/schedule` | COMPANY_ADMIN, HR | **204**. Remove the override and go back to the company default. Audited as `SCHEDULE_REMOVED`, unless there was none. |
+| PUT | `/employees/:id/schedule` | COMPANY_ADMIN, HR | Set or replace the override `{ startTime, endTime, workingDays?, lateGraceMinutes? }`. A field left out, or null, follows the company again. `workingDays` needs all seven days. Not on your own schedule. Audited as `SCHEDULE_UPDATED`, unless nothing changed. |
+| DELETE | `/employees/:id/schedule` | COMPANY_ADMIN, HR | **204**. Remove the override and go back to the company default. Not on your own schedule. Audited as `SCHEDULE_REMOVED`, unless there was none. |
 
 ## Office attendance (module `attendance`)
 
@@ -160,6 +160,7 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | `OUTSIDE_SITE_RADIUS` | 422 | `details: { distanceM, radiusM, siteName }` |
 | `MOCK_LOCATION_DETECTED` | 422 | Android reported a mock location |
 | `CANNOT_CORRECT_OWN_ATTENDANCE` | 400 | Self-correction blocked |
+| `CANNOT_SET_OWN_SCHEDULE` | 400 | Setting or removing your own schedule override is blocked |
 | `NOTHING_TO_CORRECT` | 400 | The correction's values are the ones already stored |
 | `RECORD_CHANGED` | 409 | The record or visit changed after this request read it |
 | `ATTENDANCE_RECORD_EXISTS` | 409 | That employee already has a row for that day; `details.recordId` |

@@ -47,6 +47,7 @@ schedulesRouter.put(
     const result = await setEmployeeSchedule({
       companyId: req.auth!.companyId!,
       actorUserId: req.auth!.userId,
+      actorEmployeeId: req.auth!.employeeId,
       employeeId: req.params.id!,
       data: req.body,
     });
@@ -59,7 +60,12 @@ schedulesRouter.delete(
   gated,
   requireRole("COMPANY_ADMIN", "HR"),
   asyncHandler(async (req, res) => {
-    await removeEmployeeSchedule({ companyId: req.auth!.companyId!, actorUserId: req.auth!.userId, employeeId: req.params.id! });
+    await removeEmployeeSchedule({
+      companyId: req.auth!.companyId!,
+      actorUserId: req.auth!.userId,
+      actorEmployeeId: req.auth!.employeeId,
+      employeeId: req.params.id!,
+    });
     res.status(204).send();
   }),
 );

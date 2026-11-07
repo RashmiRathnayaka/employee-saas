@@ -133,13 +133,22 @@ async function assertEmployeeExists(tenant: TenantPrisma, companyId: string, emp
   if (!employee) throw new ApiError(404, "NOT_FOUND", "Employee not found.");
 }
 
+/** A schedule decides who counts as late, so nobody decides their own. */
+function assertNotOwnSchedule(actorEmployeeId: string | null, employeeId: string) {
+  if (actorEmployeeId === employeeId) {
+    throw new ApiError(400, "CANNOT_SET_OWN_SCHEDULE", "You can't change your own schedule. Ask someone else in HR or a company admin.");
+  }
+}
+
 export async function setEmployeeSchedule(params: {
   companyId: string;
   actorUserId: string;
+  actorEmployeeId: string | null;
   employeeId: string;
   data: SetEmployeeScheduleRequest;
 }): Promise<EmployeeScheduleResponse> {
-  const { companyId, actorUserId, employeeId, data } = params;
+  const { companyId, actorUserId, actorEmployeeId, employeeId, data } = params;
+  assertNotOwnSchedule(actorEmployeeId, employeeId);
   const tenant = getTenantPrisma(companyId);
   await assertEmployeeExists(tenant, companyId, employeeId);
 
@@ -185,8 +194,14 @@ export async function setEmployeeSchedule(params: {
 }
 
 /** Back to the company's hours. Past records keep their snapshot. */
-export async function removeEmployeeSchedule(params: { companyId: string; actorUserId: string; employeeId: string }): Promise<void> {
-  const { companyId, actorUserId, employeeId } = params;
+export async function removeEmployeeSchedule(params: {
+  companyId: string;
+  actorUserId: string;
+  actorEmployeeId: string | null;
+  employeeId: string;
+}): Promise<void> {
+  const { companyId, actorUserId, actorEmployeeId, employeeId } = params;
+  assertNotOwnSchedule(actorEmployeeId, employeeId);
   const tenant = getTenantPrisma(companyId);
   await assertEmployeeExists(tenant, companyId, employeeId);
 

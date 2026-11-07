@@ -235,6 +235,28 @@ describe("schedules module", () => {
       expect(audit!.metadata).toMatchObject({ before: { startTime: null }, after: { startTime: "22:00", endTime: "06:00", lateGraceMinutes: 5 } });
     });
 
+    it.each(["HR", "COMPANY_ADMIN"] as const)("%s can't set or remove their own schedule, but a colleague can", async (role) => {
+      const { company, hr } = await setUp();
+      const caller = await addPerson(company, role);
+      const token = await at(caller, TUESDAY_MORNING);
+      const overrides = () => platformPrisma.employeeSchedule.count({ where: { employeeId: caller.employeeId } });
+
+      const setOwn = await put(token, caller.employeeId);
+      expect(setOwn.status).toBe(400);
+      expect(setOwn.body.error.code).toBe("CANNOT_SET_OWN_SCHEDULE");
+      expect(await overrides()).toBe(0);
+      expect(await auditsOf(company, "SCHEDULE_UPDATED")).toHaveLength(0);
+
+      const byColleague = await put(await at(hr, TUESDAY_MORNING), caller.employeeId);
+      expect(byColleague.status).toBe(200);
+
+      const removeOwn = await request(app).delete(scheduleOf(caller.employeeId)).set("Authorization", token);
+      expect(removeOwn.status).toBe(400);
+      expect(removeOwn.body.error.code).toBe("CANNOT_SET_OWN_SCHEDULE");
+      expect(await overrides()).toBe(1);
+      expect(await auditsOf(company, "SCHEDULE_REMOVED")).toHaveLength(0);
+    });
+
     it("a second PUT replaces the first, and a field left out follows the company again", async () => {
       const { hr, alex } = await setUp();
       const token = await at(hr, TUESDAY_MORNING);
