@@ -848,6 +848,32 @@ pass is cheap and idempotent:
   (the login is being deactivated too, and "ask HR" wouldn't make sense), and records the counts in
   the `EMPLOYEE_DEACTIVATED` audit row.
 
+**Details settled in step 2.8** (reminders and housekeeping):
+- **"Daily at HH:mm"** is `getDueDailyKeys` (`lib/jobs/schedule.ts`): the company-local date is the run
+  key, and yesterday is looked at too, so 23:30 still runs at 00:10. Reminders skip a date once they're
+  2 hours late. The GPS purge and housekeeping catch up for 24 hours, so a worker started at 02:00 first
+  runs the missed day.
+- **Check-in reminder** (`modules/attendance/checkinReminder.job.ts`): every tick, with no claim, for
+  today and yesterday (a night shift's start plus the offset can fall after midnight). Per employee, using
+  the same schedule as a check-in, override included. Most ticks stop after one check: no set of hours in
+  the company has its reminder due. "Already checked in" means a record **or a site visit** that date,
+  and any row counts, so someone already marked `ABSENT` isn't reminded. **Half-day leave is still
+  reminded:** the plan only skips full-day leave, and which half isn't recorded (Q8). It points at nothing
+  (`relatedEntityType` null) and the phone opens the Attendance tab by its type. The web just marks it
+  read, since there's no web check-in (Q24).
+- **Proof reminders** (`modules/leaveRequests/proofReminders.job.ts`): due by the end of `proofDueAt`, so
+  "overdue" starts the day after. Requests of someone who has left (employee `INACTIVE`) are skipped.
+  Titles say "Leave proof", not "Sick leave proof", since any leave type can require proof. Bodies hold
+  no HR notes or document details, ready to be lock-screen pushes in 2.9.
+- **GPS purge** (`modules/attendance/gpsPurge.job.ts`): **only the four coordinate columns are set to
+  NULL; no row is ever deleted.** The cutoff is `now − gpsRetentionDays × 24 h` on `checkInAt`, in two
+  passes: the indexed one (`checkInLat IS NOT NULL`), then rows with only a check-out position. It ignores
+  the module switches and **runs for suspended companies too** (`Job.runsWhileSuspended`): the retention
+  promise in the location notice doesn't depend on either. It logs counts only.
+- **Housekeeping** (`lib/jobs/housekeeping.ts`) is the first **platform-wide job** (`PlatformJob`,
+  claimed with `companyId` NULL). It deletes `job_runs` older than 30 days, never the heartbeat. Safe,
+  since no job looks back more than 2 days. `push_messages` and `push_devices` join it in 2.9b.
+
 **Proof reminders and HR's notes.** The Phase 1 flow for `INFO_REQUIRED`
 keeps the same `proofDueAt`: "info required" doesn't give a fresh
 deadline (decided, Q19).

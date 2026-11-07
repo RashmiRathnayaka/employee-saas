@@ -113,7 +113,8 @@ NO_EMPLOYEE_PROFILE` on the "self" endpoints.
 | Site check-in | `SITE_CHECKED_IN` | the employee's manager (if active login) | SITES |
 | Day auto-closed (no check-out) | `ATTENDANCE_AUTO_CLOSED` | the employee | ATTENDANCE |
 | HR corrected attendance / visit | `ATTENDANCE_CORRECTED` | the employee (with reason) | ATTENDANCE |
-| Check-in reminder | `CHECKIN_REMINDER` | the employee | REMINDERS |
+| Site visit auto-closed (no check-out) | `SITE_VISIT_AUTO_CLOSED` | the employee | SITES |
+| Check-in reminder | `CHECKIN_REMINDER` | the employee. `relatedEntityType`/`Id` are null (no record exists yet); the phone opens the Attendance tab by its type | REMINDERS |
 | Proof due tomorrow | `LEAVE_PROOF_DUE_SOON` | the employee | REMINDERS |
 | Proof overdue | `LEAVE_PROOF_OVERDUE` | active HR (not the requester) | REMINDERS |
 | Task assigned / reassigned to me | `TASK_ASSIGNED` | the assignee (not if they assigned it to themselves) | TASKS |

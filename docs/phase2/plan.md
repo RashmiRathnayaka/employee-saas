@@ -400,6 +400,8 @@ touches the same screen, or schedule them on their own.
   box on the site form, and it fills both the latitude and longitude fields.
 - **Web portal scrolls sideways at phone width (app shell sidebar):** the sidebar has no
   narrow layout, so every page does it (measured in step 2.5).
+- **My visits: explain an auto-closed visit:** an auto-closed visit shows only "no check-out";
+  add a line like "Closed automatically because you didn't check out" (found in 2.7 testing).
 
 ---
 

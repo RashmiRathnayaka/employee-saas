@@ -10,7 +10,9 @@ no migration: it fills GPS columns that already exist. Step 2.5,
 `20261106180000_phase2_site_visits`: the `site_visits` table. Step 2.6,
 `20261106210000_phase2_schedules_corrections`: `employee_schedules` and
 `attendance_corrections`. Step 2.7, `20261107090000_phase2_job_runs`: `job_runs` and
-`company_settings.attendanceEnabledAt`. The other new tables aren't migrated yet.
+`company_settings.attendanceEnabledAt`. Step 2.8 has no migration: its jobs use columns from 2.1
+(the reminder settings, `gpsRetentionDays`, `notifications.dedupeKey`) and the GPS purge indexes from
+2.3 and 2.5. The other new tables aren't migrated yet.
 
 This adds to `docs/database-schema.md` (Phase 1). The same conventions apply:
 - `id` is a UUID.
