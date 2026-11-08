@@ -32,10 +32,17 @@
           "isAndroidForegroundServiceEnabled": false,
           "isAndroidMotionActivityEnabled": false
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "30d9b758-d3fa-4809-89b9-4343a7a3dec2"
+      }
+    },
+    "owner": "rashmirathnayaka02"
   }
 }
