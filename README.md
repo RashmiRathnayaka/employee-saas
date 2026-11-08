@@ -171,8 +171,9 @@ cp apps/api/.env.example apps/api/.env
 cp apps/api/.env.test.example apps/api/.env.test
 
 # 4. Generate the Prisma client, create the dev database schema
+#    (applies the committed migrations only; see "Migrations" below)
 pnpm --filter @employee-saas/api db:generate
-pnpm db:migrate
+pnpm db:migrate:deploy
 
 # 5. Seed demo data (2 companies, each with an admin, HR, manager, 3 employees, plus 1 platform super admin)
 pnpm db:seed
@@ -202,6 +203,22 @@ tables before it runs (a global `beforeEach` in `src/test/setupDb.ts`), so
 tests never see leftover data from a previous test, dev data, or seed data -
 each test starts from a completely empty database and sets up whatever rows
 it needs.
+
+## Migrations
+
+**Never run `prisma migrate dev` in this project.** Several migrations contain
+hand-written SQL that `schema.prisma` can't describe (partial indexes, a
+`NULLS NOT DISTINCT` unique index, functional indexes, CHECK constraints).
+`migrate dev` sees those as "drift" and writes a migration that **drops them**,
+or offers to reset the database. On 2026-11-08 it dropped the unique index on
+`job_runs`, which let the worker re-run every daily job every 30 seconds (see
+`docs/reports/step-2.9b.md`).
+
+- **Apply migrations:** `pnpm db:migrate:deploy` (dev DB) and
+  `pnpm --filter @employee-saas/api db:migrate:test` (test DB). Both only apply
+  committed migration files, never write new ones.
+- **Write a new migration:** with `prisma migrate diff` between the old and new
+  `schema.prisma`, as in `docs/phase2/database-schema-phase2.md` ("Migrations").
 
 ## The background worker
 

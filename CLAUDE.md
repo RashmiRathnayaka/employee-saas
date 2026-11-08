@@ -106,7 +106,7 @@ pnpm dev                 # run api + web + background worker (the worker writes 
 pnpm test                # runs workspaces ONE AT A TIME (--workspace-concurrency=1) so API DB tests aren't starved of CPU; ~2.5 min
 pnpm typecheck
 pnpm lint
-pnpm db:migrate
+pnpm db:migrate:deploy   # apply committed migrations to the dev DB. NEVER `prisma migrate dev`: it drops our hand-written indexes (README "Migrations")
 pnpm db:seed
 pnpm --filter @employee-saas/api db:migrate:test   # apply migrations to the test DB (also runs automatically before `pnpm test`)
 pnpm --filter @employee-saas/shared test           # shared helpers (date tests run under TZ=Asia/Colombo and TZ=UTC)

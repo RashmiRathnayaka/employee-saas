@@ -11,7 +11,7 @@
     "test": "pnpm -r --workspace-concurrency=1 test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
-    "db:migrate": "pnpm --filter @employee-saas/api db:migrate",
+    "db:migrate:deploy": "pnpm --filter @employee-saas/api db:migrate:deploy",
     "db:seed": "pnpm --filter @employee-saas/api db:seed"
   },
   "devDependencies": {

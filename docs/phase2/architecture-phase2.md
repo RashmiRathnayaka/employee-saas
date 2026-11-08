@@ -595,6 +595,35 @@ store a location trail of failed attempts. Only mock detection is.
   - Other errors or HTTP 5xx/429 → retry with backoff (1 min, 5 min,
     30 min). After 3 attempts the row is `FAILED`.
 
+### 4.3a How sending works in code (decided in step 2.9b)
+The design above leaves some "how" open. These are the choices made when building it:
+- **The "immediate kick" is per request.** A request that writes a notification marks itself
+  (Node's built-in `AsyncLocalStorage`, a per-request scratchpad that follows async code). After
+  the response is sent, and so after its transaction has committed or rolled back, the API runs
+  one send pass for that company, fire-and-forget. A rolled-back request has no rows to send.
+  Jobs run in the worker, which runs a send pass for each company **at the end of every tick**,
+  so a reminder written in a tick goes out in that same tick.
+- **A claim is a short lease, not a lock held during the network call.** One `UPDATE … WHERE id
+  IN (SELECT … FOR UPDATE SKIP LOCKED LIMIT 100) RETURNING …` moves the rows' `nextAttemptAt` 2
+  minutes ahead and counts the attempt. Then the call to Expo runs outside any transaction. If
+  the process dies mid-send, the rows become due again after 2 minutes. That's "at least once":
+  a rare duplicate push, never a lost one.
+- **Sending is per company**, through the company's `companyId`, like every other tenant query.
+- **Checked at send time, and `SKIPPED` if they fail:**
+  - the device is disabled;
+  - **the device now belongs to someone else**, after a logout and another person's login on the
+    same phone. Without this, a push queued for the old user would reach the new one;
+  - the recipient's login is deactivated;
+  - the row is over **24 hours** old (`errorCode` `EXPIRED`). A suspended company's rows wait
+    while the worker skips it, and shouldn't all arrive when it's reactivated.
+- **Receipts per row, not per 15-minute batch.** Each tick, a `SENT` row is checked once it's
+  15 minutes old, then every 15 minutes (`receiptCheckedAt` is its lease) until it's 24 hours old.
+- **`data` also carries `type`,** so a check-in reminder (which points at nothing) still opens the
+  Attendance tab.
+- **`PUSH_DRIVER`** env: `expo` (default) or `off`, which writes the outbox and sends nothing.
+  It's `off` by default under `NODE_ENV=test`, so tests never call Expo. Job tests inject a fake
+  `PushSender`.
+
 ### 4.4 Receipts
 - A ticket only means "Expo accepted it". The **receipt**, available about
   15 min later, says whether Apple/Google delivered it.
