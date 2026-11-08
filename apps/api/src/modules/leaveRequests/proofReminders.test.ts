@@ -178,6 +178,19 @@ describe("leave.proofOverdue", () => {
     expect(await notificationsOf(hr.user.id, "LEAVE_PROOF_OVERDUE")).toHaveLength(1);
   });
 
+  it("only covers proof due in the last 30 days", async () => {
+    const { hr, addRequest } = await setUp();
+    // TODAY is 2026-03-03: 30 days before is 2026-02-01, 31 days before is 2026-01-31.
+    const thirtyDays = await addRequest("2026-02-01", { startDate: date("2026-01-29"), endDate: date("2026-01-29") });
+    await addRequest("2026-01-31", { startDate: date("2026-01-28"), endDate: date("2026-01-28") });
+    await addRequest("2025-06-01", { startDate: date("2025-05-29"), endDate: date("2025-05-29") });
+
+    await tick(AT_NINE);
+
+    const rows = await notificationsOf(hr.user.id, "LEAVE_PROOF_OVERDUE");
+    expect(rows.map((row) => row.relatedEntityId)).toEqual([thirtyDays.id]);
+  });
+
   it("doesn't go to the employee, and stops once proof is in", async () => {
     const { employee, hr, addRequest } = await setUp();
     await addRequest("2026-03-01", { proofStatus: "SUBMITTED" });

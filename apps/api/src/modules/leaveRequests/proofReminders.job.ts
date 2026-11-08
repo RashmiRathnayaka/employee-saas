@@ -22,6 +22,11 @@ const REQUEST_CLOSED = ["CANCELLED", "REJECTED", "REVOKED"] as const;
 
 type ProofStatusOwed = (typeof PROOF_STILL_OWED)[number];
 
+/** "Overdue" only covers proof due in the last 30 days (your decision after step 2.8), so
+ * switching reminders on in a company with a long history doesn't send HR one message per old
+ * request. Proof due exactly 30 days ago is still included; 31 days ago isn't. */
+export const OVERDUE_LOOKBACK_DAYS = 30;
+
 async function dueRunKeys({ company, settings, now }: JobContext): Promise<string[]> {
   if (!settings.proofRemindersEnabled) return [];
   return getDueDailyKeys({ now, timezone: company.timezone, time: settings.dailyReminderTime, catchUpMs: REMINDER_CATCH_UP_MS });
@@ -100,7 +105,10 @@ export const proofOverdueJob: Job = {
   dueRunKeys,
   async run(context, localDate) {
     const { tenant, company } = context;
-    const requests = await findRequestsOwingProof(context, { lt: isoDateToUtcDate(localDate) });
+    const requests = await findRequestsOwingProof(context, {
+      gte: isoDateToUtcDate(addDaysToIsoDate(localDate, -OVERDUE_LOOKBACK_DAYS)),
+      lt: isoDateToUtcDate(localDate),
+    });
     if (requests.length === 0) return;
     const hrUserIds = await findActiveHrUserIds(tenant, { companyId: company.id });
 
