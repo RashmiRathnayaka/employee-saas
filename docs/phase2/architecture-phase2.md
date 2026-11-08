@@ -708,6 +708,23 @@ live from `expo start`, like Expo Go does.
   has custom hoisting rules for React 18/19. EAS may need extra settings to
   install the workspace correctly. That's why step 2.9a is "get a dev build
   running" on its own, before any push code.
+- **What 2.9a found (2026-11-08):** steps 1, 2, 5 (`expo-dev-client`) and 6–7 are
+  done, and the first cloud build succeeded. The monorepo needed:
+  - `eas.json` pins `node` 22.14.0 and `pnpm` 12.16.1, the versions that wrote the
+    lockfile. `pnpm-workspace.yaml` uses recent pnpm settings (`allowBuilds`,
+    release-age rules) that an older pnpm on EAS would ignore or reject.
+  - `expo-font` and `expo-linking` as **direct** dependencies. They're peers of
+    `@expo/vector-icons` and `expo-router`. Expo Go has them built in, but a dev build
+    only autolinks native modules listed in the app's own `package.json`.
+  - `expo-constants` aligned to 58.0.15, so `expo-linking` doesn't bring a second
+    copy of a native module.
+  - No hoisting change: the workspace's isolated `node_modules` worked as is.
+    `apps/mobile/.npmrc`'s `node-linker=hoisted` has no effect, because pnpm only
+    reads that setting at the workspace root.
+  - Before any rebuild, run `npx expo-doctor` in `apps/mobile`.
+  - `eas init` copies some plugin-computed values into `app.json` (an explicit
+    `android.permissions` list, `extra.router`). Only the `projectId` and `owner` are
+    kept: an explicit permissions list can change which default permissions Expo keeps.
 
 ---
 
@@ -800,7 +817,7 @@ useless and is skipped).
 | `attendance.dayClose` (auto-close + absent marking) | Every tick. Per employee, when `now >= scheduledEndAt(workDate) + autoCheckoutAfterMinutes`. | `workDate`, with the claim taken per company per work date at the **latest** shift end in the company. Employees whose shift ends earlier are handled by a lightweight per-employee pass on each tick (see note). | 1. **Auto-close:** records with check-in and no check-out → `status = INCOMPLETE`, `autoClosedAt = now`, flag `AUTO_CLOSED`; open site visits → `AUTO_CLOSED`; employee gets `ATTENDANCE_AUTO_CLOSED` ("You didn't check out on 3 Nov. Ask HR to correct it."). 2. **Absent marking:** active employees (joined on or before `workDate`) with no record on a working day → `ON_LEAVE` if approved leave covers it, `HOLIDAY` if it's a company holiday, else `ABSENT`. No notification for absent. | `UPDATE … WHERE checkOutAt IS NULL AND autoClosedAt IS NULL`; `INSERT … ON CONFLICT DO NOTHING`; notification `dedupeKey = AUTO_CLOSED:<recordId>` |
 | `attendance.checkinReminder` | Per employee at `scheduledStartAt + checkinReminderOffsetMinutes`, if `checkinReminderEnabled` | dedupeKey only (per employee per day) | → employee "You haven't checked in yet today". Skip if: non-working day, holiday, full-day approved leave, already checked in (office or site), no active login, inactive. | `dedupeKey = CHECKIN_REMINDER:<employeeId>:<workDate>` |
 | `leave.proofDueTomorrow` | Daily at `dailyReminderTime` | `localDate` | Requests with `proofStatus IN (MISSING, INFO_REQUIRED, REJECTED)`, status not `CANCELLED/REJECTED/REVOKED`, and proof due date (`proofDueAt` is a UTC-midnight calendar date in Phase 1) **= tomorrow** → employee "Sick leave proof due tomorrow". | `dedupeKey = PROOF_DUE_TOMORROW:<leaveRequestId>` (once per request) |
-| `leave.proofOverdue` | Daily at `dailyReminderTime` | `localDate` | Same filter, due date **< today** → every active HR user, except the requester (Phase 1 rule). One notification per request, sent once, not daily. | `dedupeKey = PROOF_OVERDUE:<leaveRequestId>:<hrUserId>` |
+| `leave.proofOverdue` | Daily at `dailyReminderTime` | `localDate` | Same filter, due date **< today and ≥ today − 30 days** → every active HR user, except the requester (Phase 1 rule). One notification per request, sent once, not daily. | `dedupeKey = PROOF_OVERDUE:<leaveRequestId>:<hrUserId>` |
 | `gps.purge` | Daily 03:00 | `localDate` | NULL the coordinates older than `gpsRetentionDays`. | Pure `UPDATE … WHERE … IS NOT NULL` |
 | `push.send` | Every tick (queue) | none | §4.3 | `SKIP LOCKED` + status transitions |
 | `push.receipts` | Every 15 min (platform-wide) | `yyyy-mm-ddThh:mm` rounded to 15 | §4.4 | claim row |
@@ -858,11 +875,15 @@ pass is cheap and idempotent:
   the same schedule as a check-in, override included. Most ticks stop after one check: no set of hours in
   the company has its reminder due. "Already checked in" means a record **or a site visit** that date,
   and any row counts, so someone already marked `ABSENT` isn't reminded. **Half-day leave is still
-  reminded:** the plan only skips full-day leave, and which half isn't recorded (Q8). It points at nothing
+  reminded:** the plan only skips full-day leave, and which half isn't recorded (Q8). Confirmed by the
+  developer after step 2.8: keep it until morning/afternoon is recorded. It points at nothing
   (`relatedEntityType` null) and the phone opens the Attendance tab by its type. The web just marks it
   read, since there's no web check-in (Q24).
 - **Proof reminders** (`modules/leaveRequests/proofReminders.job.ts`): due by the end of `proofDueAt`, so
-  "overdue" starts the day after. Requests of someone who has left (employee `INACTIVE`) are skipped.
+  "overdue" starts the day after. **"Overdue" only looks back 30 days** (`OVERDUE_LOOKBACK_DAYS`, the
+  developer's decision after step 2.8): proof due between today − 30 and yesterday. Older requests are
+  never reminded, so switching reminders on in a company with a long history causes no burst.
+  Requests of someone who has left (employee `INACTIVE`) are skipped.
   Titles say "Leave proof", not "Sick leave proof", since any leave type can require proof. Bodies hold
   no HR notes or document details, ready to be lock-screen pushes in 2.9.
 - **GPS purge** (`modules/attendance/gpsPurge.job.ts`): **only the four coordinate columns are set to

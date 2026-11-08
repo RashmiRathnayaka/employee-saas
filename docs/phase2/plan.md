@@ -3,8 +3,9 @@
 **Status: approved. All open questions were resolved by the developer on
 2026-11-03 (see "Resolved questions" at the end).** Steps 2.1 to 2.5 are
 implemented and tested on a device (`docs/reports/step-2.1.md` to `step-2.5.md`). Step 2.6
-is tested on a device too (`docs/reports/step-2.6.md`). Step 2.7 is implemented and awaiting
-its checklist (`docs/reports/step-2.7.md`).
+is tested on a device too (`docs/reports/step-2.6.md`). Steps 2.7 and 2.8 are implemented
+(`docs/reports/step-2.7.md`, `step-2.8.md`). Step 2.9a's dev build is built in EAS
+(`docs/reports/step-2.9a.md`).
 
 Design: `database-schema-phase2.md`, `api-phase2.md`,
 `permissions-phase2.md`, `architecture-phase2.md` (all in `docs/phase2/`).
@@ -307,6 +308,13 @@ and the riskiest unknowns come early:
 - Try it: the app runs from your own dev build exactly as in Expo Go.
 - **Risk: highest of the phase.** EAS + a pnpm workspace + our React 18/19
   hoist rules. That's why it's isolated.
+- **Done (2026-11-08):** the first cloud build succeeded with no hoisting change.
+  It needed pinned node/pnpm in `eas.json`, plus `expo-font` and `expo-linking` as
+  direct dependencies (your approval) and `expo-constants` 58.0.15 to avoid a
+  duplicate native module. Details: architecture §4.7, "What 2.9a found".
+- **Deferred (your decision):** five SDK 58 version bumps from `expo-doctor` (`expo`,
+  `expo-router`, `expo-splash-screen`, `jest-expo` patch; `react-native-safe-area-context`
+  5.10 → 5.11). Take them with 2.9b's native libraries, so the native code is rebuilt once.
 
 **2.9b — Push.**
 - Scope:

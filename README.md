@@ -489,6 +489,45 @@ instead.
 | Metro can't resolve `@employee-saas/shared` ("Unable to resolve module") | Metro started before `pnpm install` finished linking the workspace, or `apps/mobile/metro.config.js`'s `watchFolders`/`nodeModulesPaths` wiring is missing. Stop Expo, re-run `pnpm install` at the repo root, then restart with `pnpm --filter @employee-saas/mobile start -- --clear` to also clear Metro's cache. |
 | "Unable to resolve ./roles.js from packages/shared/src/index.ts" (or any other `packages/shared` file ending in `.js`) | `packages/shared` imports its own files with a `.js` extension that actually points at a `.ts` file (standard TypeScript "NodeNext" style) - Metro doesn't resolve that the way `tsc`/Vite do. `apps/mobile/metro.config.js`'s `resolver.resolveRequest` override handles this already; if you still see it, `metro.config.js` was reverted or edited. Restart with `pnpm --filter @employee-saas/mobile start -- --clear` after fixing it. |
 
+### Run it from your own dev build (step 2.9a)
+
+A **development build** ("dev build") is your own installable copy of the app.
+It's like Expo Go, but it contains exactly this project's native code. It still
+loads the JavaScript live from `expo start` on your PC, so code changes appear
+just as they do in Expo Go. Push notifications (step 2.9b) only work in a dev
+build, since Expo Go no longer supports them on Android.
+
+**Install it (once per build):** open the build's page on expo.dev on your
+phone (Builds, in the `employee-saas-mobile` project), tap **Install**, and
+open the downloaded APK. Android asks to allow installing apps from your
+browser the first time. The app is called **Employee SaaS**, and it sits next
+to Expo Go without replacing it.
+
+**Run it:** start the API and Expo as in step 5. Since `expo-dev-client` is
+installed, `expo start` now opens in **development build** mode. Open the
+Employee SaaS app on the phone and pick your PC from the list of servers, or
+scan the QR code with the phone's camera. To use Expo Go instead, press **`s`**
+in the Expo terminal to switch modes, then scan as before.
+
+**When to rebuild:** only when something native changes: a new library with
+native code, or `app.json` plugins and permissions. JavaScript changes never
+need a rebuild. To build, in `apps/mobile` (it asks questions, so use your own
+terminal):
+
+```
+npx eas-cli@27.5.0 build --profile development --platform android
+```
+
+The settings are in `apps/mobile/eas.json`. The cloud build uses node and pnpm
+versions pinned there, matching this repo's lockfile. The app's signing key is
+stored on your Expo account, not in the repo.
+
+| Problem | Fix |
+|---|---|
+| The dev build app shows no servers | Phone and PC on different Wi-Fi, or Windows Firewall blocks Metro's port 8081. Scan the QR code instead, or enter the URL shown by `expo start` by hand. |
+| "No development build installed" / `expo start` asks for a build | You opened Expo Go while in dev build mode: press `s` to switch, or open the Employee SaaS app instead. |
+| The app crashes on start after adding a library | The library has native code and needs a rebuild. Run `npx expo-doctor` in `apps/mobile` first: a missing peer dependency or a duplicate native module also crashes a dev build. |
+
 Technical note on file downloads: once your phone can reach the API at
 all, sick leave proof documents work the same way with no extra
 configuration - the `local` storage driver serves them from this same API

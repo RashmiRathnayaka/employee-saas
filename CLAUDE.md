@@ -114,6 +114,8 @@ pnpm --filter @employee-saas/api worker            # the background worker alone
 node scripts/browser-check.mjs start --reset --seed   # real-browser check: temp API on 4001 + temp Vite on 5199, on the TEST DB
 node scripts/browser-check.mjs run scripts/browser-checks/smoke.mjs   # run a check (Playwright, with a login helper)
 node scripts/browser-check.mjs stop                # stops only what's on 4001 and 5199, never 4000 or 5173 (usage: header of the script)
+npx eas-cli@27.5.0 build --profile development --platform android   # in apps/mobile: Android dev build in Expo's cloud (interactive; the developer runs it)
+npx expo-doctor                                    # in apps/mobile: run before any dev build (missing peers, duplicate native modules)
 ```
 
 ## Status
